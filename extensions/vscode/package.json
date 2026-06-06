@@ -1,0 +1,97 @@
+{
+  "name": "secure-ai-pipeline",
+  "displayName": "Secure AI Pipeline",
+  "description": "Inline security diagnostics for AI-generated code — catches insecure defaults as you save.",
+  "version": "1.0.0",
+  "publisher": "AvinashNutalapati",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AvinashNutalapati/secure-ai-pipeline.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "security",
+    "ai",
+    "sast",
+    "cursor",
+    "slopsquatting"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescriptreact"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "securePipeline",
+          "title": "Secure AI Pipeline",
+          "icon": "media/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "securePipeline": [
+        {
+          "id": "securePipeline.findings",
+          "name": "Findings"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "securePipeline.showProblems",
+        "title": "Secure AI Pipeline: Show Problems"
+      },
+      {
+        "command": "securePipeline.scanWorkspace",
+        "title": "Secure AI Pipeline: Rescan Open Files"
+      }
+    ],
+    "configuration": {
+      "title": "Secure AI Pipeline",
+      "properties": {
+        "securePipeline.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Secure AI Pipeline extension."
+        },
+        "securePipeline.severity": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning"
+          ],
+          "default": "warning",
+          "description": "Minimum severity to display. 'error' hides warning-level findings."
+        },
+        "securePipeline.runOnType": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run checks while typing, not just on save."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

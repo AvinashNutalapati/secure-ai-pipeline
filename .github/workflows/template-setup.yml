@@ -1,0 +1,69 @@
+name: Template Setup
+
+# Fires once when a repo is created from this template. It personalises the
+# README, makes an initial commit, opens a "what to do next" issue, and then
+# deletes itself so it never runs again.
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  setup:
+    name: "🚀 Initialise from template"
+    runs-on: ubuntu-latest
+    # Never run in the source template repository itself.
+    if: ${{ github.repository != 'AvinashNutalapati/secure-ai-pipeline' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Personalise README
+        env:
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          if [ -f .github/TEMPLATE_README.md ]; then
+            mv .github/TEMPLATE_README.md README.md
+          fi
+          # Replace placeholders with the new repo's owner and name.
+          sed -i "s/GITHUB_USER/${OWNER}/g; s/REPO_NAME/${REPO}/g; s/AvinashNutalapati/${OWNER}/g" README.md
+
+      - name: Remove this workflow so it only runs once
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/template-setup.yml
+
+      - name: Commit changes
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: initialise from secure-ai-pipeline template"
+            git push
+          fi
+
+      - name: Open welcome issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --title "✅ Pipeline is live — here's what to do next" \
+            --body "$(cat <<'EOF'
+          Your security pipeline is wired and running. A few optional steps to finish setup:
+
+          - [ ] Set \`STAGING_URL\` in repo Settings → Secrets and variables → Actions → Variables (enables DAST)
+          - [ ] Install pre-commit locally: \`pip install pre-commit && pre-commit install\`
+          - [ ] Push a test commit to see the pipeline run
+          - [ ] (Optional) Install the VS Code extension: search "Secure AI Pipeline" in the Extensions panel
+
+          The pipeline runs on every push and pull request. See the **Actions** tab for results.
+          EOF
+          )"

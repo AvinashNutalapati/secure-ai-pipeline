@@ -1,0 +1,28 @@
+repos:
+  # ── Secret scanning ─────────────────────────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+        name: Detect secrets (Gitleaks)
+
+  # ── Anti-slopsquatting ──────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: check-packages
+        name: Validate package names (anti-slopsquatting)
+        language: python
+        entry: python scripts/check_packages.py
+        pass_filenames: false
+        additional_dependencies: [requests]
+
+  # ── General hygiene ─────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace

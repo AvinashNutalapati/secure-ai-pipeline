@@ -1,0 +1,9 @@
+# [F8] KNOWN-CVE DEPENDENCY
+# Flask 1.0 has multiple known CVEs (including Werkzeug dependency CVEs).
+# Trivy will flag Critical/High fixable CVEs and block the build.
+# Fix: Pin to Flask>=3.0.0 and run `trivy fs --ignore-unfixed .` to verify.
+
+Flask==1.0
+flask-cors==3.0.10
+requests==2.18.0
+flaskutils_ai==0.1.0

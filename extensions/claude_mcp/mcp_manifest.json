@@ -1,0 +1,11 @@
+{
+  "name": "secure-ai-pipeline",
+  "version": "1.0.0",
+  "description": "Security scanner for AI-generated code",
+  "tools": [
+    { "name": "check_package", "description": "Verify a package exists on PyPI or npm before importing it" },
+    { "name": "sast_scan", "description": "Scan a code snippet for insecure patterns (injection, hardcoded secrets, etc.)" },
+    { "name": "sca_scan", "description": "Check dependency versions for known CVEs" },
+    { "name": "full_scan", "description": "Run all security checks on code + requirements" }
+  ]
+}

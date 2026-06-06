@@ -1,0 +1,141 @@
+openapi: 3.1.0
+info:
+  title: Secure AI Pipeline
+  description: >-
+    Security scanner for AI-generated code. Checks package names against public
+    registries, scans snippets for insecure defaults, and reports known CVEs in
+    dependencies. All operations are read-only.
+  version: 1.0.0
+servers:
+  - url: https://api.secure-ai-pipeline.dev
+    description: Replace with your deployed scanner URL.
+paths:
+  /scan/packages:
+    post:
+      operationId: scanPackages
+      summary: Verify package names exist on their registries (anti-slopsquatting).
+      x-openai-isConsequential: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackagesRequest"
+      responses:
+        "200":
+          description: Scan result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanResult"
+  /scan/sast:
+    post:
+      operationId: scanSast
+      summary: Scan a code snippet for insecure patterns.
+      x-openai-isConsequential: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SastRequest"
+      responses:
+        "200":
+          description: Scan result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanResult"
+  /scan/full:
+    post:
+      operationId: scanFull
+      summary: Run package, SAST and SCA checks together.
+      x-openai-isConsequential: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FullRequest"
+      responses:
+        "200":
+          description: Scan result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanResult"
+components:
+  schemas:
+    PackagesRequest:
+      type: object
+      required:
+        - packages
+      properties:
+        packages:
+          type: array
+          items:
+            type: string
+          description: Package names to verify against PyPI / npm.
+    SastRequest:
+      type: object
+      required:
+        - code
+        - language
+      properties:
+        code:
+          type: string
+          description: Source code to scan.
+        language:
+          type: string
+          enum:
+            - python
+            - javascript
+          description: Language of the snippet.
+    FullRequest:
+      type: object
+      required:
+        - code
+        - requirements
+      properties:
+        code:
+          type: string
+          description: Source code to scan.
+        requirements:
+          type: string
+          description: Raw requirements.txt (or package.json) content.
+        language:
+          type: string
+          enum:
+            - python
+            - javascript
+          default: python
+    Finding:
+      type: object
+      properties:
+        rule:
+          type: string
+        line:
+          type: integer
+        severity:
+          type: string
+        message:
+          type: string
+        fix:
+          type: string
+    ScanResult:
+      type: object
+      required:
+        - findings
+        - blocked
+        - summary
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/Finding"
+        blocked:
+          type: boolean
+          description: True if any finding is at a blocking severity.
+        summary:
+          type: string
+          description: A human-readable sentence describing the result.

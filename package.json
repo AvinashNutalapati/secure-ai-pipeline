@@ -1,0 +1,41 @@
+{
+  "name": "secure-ai-pipeline",
+  "version": "1.0.0",
+  "description": "Production-ready security pipeline for AI-generated code",
+  "bin": {
+    "secure-ai-pipeline": "./cli/init.js"
+  },
+  "files": [
+    "cli/",
+    "scripts/",
+    ".semgrep/",
+    ".zap/",
+    ".pre-commit-config.yaml",
+    "action.yml",
+    ".github/workflows/security.yml"
+  ],
+  "scripts": {
+    "test": "node cli/init.js --help"
+  },
+  "keywords": [
+    "security",
+    "ai",
+    "devsecops",
+    "sast",
+    "sca",
+    "slopsquatting"
+  ],
+  "author": "AvinashNutalapati",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AvinashNutalapati/secure-ai-pipeline.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AvinashNutalapati/secure-ai-pipeline/issues"
+  },
+  "homepage": "https://github.com/AvinashNutalapati/secure-ai-pipeline#readme",
+  "engines": {
+    "node": ">=18"
+  }
+}

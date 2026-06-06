@@ -1,0 +1,80 @@
+name: Secure AI Pipeline
+description: Security pipeline for AI-generated code — catches slopsquatting, secrets, CVEs, and insecure defaults.
+author: AvinashNutalapati
+
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  staging-url:
+    description: URL of your staging environment for DAST scanning. Leave empty to skip DAST.
+    required: false
+    default: ""
+  python-version:
+    description: Python version for running scripts.
+    required: false
+    default: "3.12"
+  fail-on-warnings:
+    description: Treat WARN-level findings as blocking failures.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: pip install requests --quiet
+
+    - name: Stage 0 — Package existence check (anti-slopsquatting)
+      shell: bash
+      run: python ${{ github.action_path }}/scripts/check_packages.py
+
+    - name: Stage 0 — Secret scan (Gitleaks)
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+
+    - name: Stage 1 — SAST (Semgrep)
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: >
+          p/python p/javascript p/security-audit
+          ${{ github.action_path }}/.semgrep/ai-insecure-defaults.yml
+        generateSarif: "1"
+
+    - name: Upload Semgrep SARIF
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: semgrep.sarif
+
+    - name: Stage 1 — SCA + IaC (Trivy)
+      uses: aquasecurity/trivy-action@0.20.0
+      with:
+        scan-type: fs
+        format: sarif
+        output: trivy.sarif
+        severity: CRITICAL,HIGH
+        exit-code: "1"
+        ignore-unfixed: true
+
+    - name: Upload Trivy SARIF
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy.sarif
+
+    - name: Stage 2 — DAST (ZAP baseline)
+      if: ${{ inputs.staging-url != '' }}
+      uses: zaproxy/action-baseline@v0.12.0
+      with:
+        target: ${{ inputs.staging-url }}
+        rules_file_name: ${{ github.action_path }}/.zap/rules.tsv
+        fail_action: false

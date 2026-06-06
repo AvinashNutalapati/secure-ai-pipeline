@@ -1,0 +1,113 @@
+rules:
+
+  # ── TLS verification disabled ──────────────────────────────────────────────
+  - id: tls-verify-false
+    patterns:
+      - pattern: requests.$METHOD(..., verify=False, ...)
+    message: >
+      TLS certificate verification is disabled (verify=False). This allows
+      man-in-the-middle attacks. Remove verify=False or set verify to a CA bundle path.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      ai-generated-pattern: true
+
+  # ── Flask debug mode enabled ───────────────────────────────────────────────
+  - id: flask-debug-true
+    patterns:
+      - pattern: app.run(..., debug=True, ...)
+      - pattern: app.run(debug=True)
+    message: >
+      Flask debug mode is enabled. This exposes an interactive debugger and
+      allows arbitrary code execution. Never enable debug=True in production.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-94: Improper Control of Generation of Code"
+      ai-generated-pattern: true
+
+  # ── Wildcard CORS ──────────────────────────────────────────────────────────
+  - id: wildcard-cors
+    patterns:
+      - pattern: CORS($APP, resources={r"/*": {"origins": "*"}})
+      - pattern: CORS($APP, origins="*")
+      - pattern: response.headers["Access-Control-Allow-Origin"] = "*"
+    message: >
+      Wildcard CORS (origins="*") allows any website to make credentialed
+      requests to this API. Restrict to explicit trusted origins.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-942: Permissive Cross-domain Policy with Untrusted Domains"
+      ai-generated-pattern: true
+
+  # ── Hardcoded credentials / API keys ──────────────────────────────────────
+  - id: hardcoded-api-key
+    patterns:
+      - pattern: $KEY = "..."
+        metavariable-regex:
+          metavariable: $KEY
+          regex: (?i)(api_key|secret|password|token|passwd|auth_key|access_key)
+      - pattern: $KEY = '...'
+        metavariable-regex:
+          metavariable: $KEY
+          regex: (?i)(api_key|secret|password|token|passwd|auth_key|access_key)
+    message: >
+      Possible hardcoded credential in variable '$KEY'. Use environment
+      variables or a secrets manager (e.g., os.environ["KEY"]) instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      ai-generated-pattern: true
+
+  # ── SQL injection via string formatting ───────────────────────────────────
+  - id: sql-injection-fstring
+    patterns:
+      - pattern: $CURSOR.execute(f"...{$VAR}...")
+      - pattern: $CURSOR.execute("..." % $VAR)
+      - pattern: $CURSOR.execute("..." + $VAR)
+      - pattern: $CURSOR.execute("..." + $VAR + "...")
+    message: >
+      SQL query built by string concatenation or f-string. Use parameterised
+      queries (cursor.execute(sql, (param,))) to prevent SQL injection.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements in SQL Command"
+      ai-generated-pattern: true
+
+  # ── subprocess shell=True ─────────────────────────────────────────────────
+  - id: subprocess-shell-true
+    patterns:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+    message: >
+      shell=True with user-controlled input enables command injection. Use a
+      list of arguments instead and remove shell=True.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      ai-generated-pattern: true
+
+  # ── eval / exec on external input ─────────────────────────────────────────
+  - id: eval-user-input
+    patterns:
+      - pattern: eval(request.$METHOD(...))
+      - pattern: exec(request.$METHOD(...))
+    message: >
+      eval/exec on request data allows arbitrary code execution. Remove this
+      entirely or replace with a safe parsing approach.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-94: Code Injection"
+      ai-generated-pattern: true
