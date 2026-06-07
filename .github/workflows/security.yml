@@ -60,25 +60,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Semgrep
-        uses: returntocorp/semgrep-action@v1
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          config: >
-            p/python
-            p/javascript
-            p/typescript
-            p/security-audit
-            p/owasp-top-ten
-            .semgrep/ai-insecure-defaults.yml
-          generateSarif: "1"
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}  # optional cloud dashboard
+          python-version: "3.12"
+
+      - name: Run Semgrep
+        run: |
+          pip install semgrep --quiet
+          semgrep scan \
+            --config p/python \
+            --config p/javascript \
+            --config p/typescript \
+            --config p/security-audit \
+            --config p/owasp-top-ten \
+            --config .semgrep/ai-insecure-defaults.yml \
+            --sarif --output semgrep.sarif
 
       - name: Upload SARIF to GitHub
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
+
+      - name: SAST gate (hard block on ERROR-level findings)
+        run: python scripts/sarif_gate.py semgrep.sarif --label Semgrep
+        # FAIL_ON_WARNINGS unset -> warnings (e.g. wildcard-cors) annotate but never block
 
   # ─────────────────────────────────────────────────────────────
   # STAGE 1 — SCA + IaC + Container (Trivy — block on Critical/High fixable)

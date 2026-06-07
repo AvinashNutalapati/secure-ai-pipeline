@@ -25,6 +25,7 @@ const FILES_TO_COPY = [
   path.join(".github", "workflows", "security.yml"),
   path.join("scripts", "check_packages.py"),
   path.join("scripts", "run_pipeline.py"),
+  path.join("scripts", "sarif_gate.py"),
   path.join(".semgrep", "ai-insecure-defaults.yml"),
   path.join(".zap", "rules.tsv"),
   ".pre-commit-config.yaml",
