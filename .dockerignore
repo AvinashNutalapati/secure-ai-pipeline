@@ -1,0 +1,22 @@
+# Keep the Docker build context small — only extensions/claude_mcp is needed.
+.git
+.github
+.semgrep
+.zap
+.pre-commit-config.yaml
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+cli
+demo
+docs
+scripts
+tests
+extensions/vscode
+extensions/openai-gpt
+extensions/claude_mcp/README.md
+*.vsix
+pipeline-results.json
+node_modules
+BUILD_PROMPT.md

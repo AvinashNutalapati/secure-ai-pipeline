@@ -1,0 +1,11 @@
+# Render Blueprint — deploys the REST scanner that backs the OpenAI GPT Action.
+# Render auto-detects this file at the repo root. After the first deploy, copy the
+# service URL into extensions/openai-gpt/openapi.yaml -> servers[0].url.
+services:
+  - type: web
+    name: secure-ai-pipeline-scanner
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
