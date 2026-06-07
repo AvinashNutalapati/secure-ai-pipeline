@@ -2,17 +2,40 @@
 """
 Anti-slopsquatting guard.
 
-Scans all Python and JS/TS files in the repo for imported package names,
-then verifies each one actually exists on PyPI (for Python) or npm (for JS/TS).
-Exits 1 if any hallucinated / non-existent package is found.
+Scans Python and JS/TS files in a repository for imported package names, then
+verifies each one actually exists on PyPI (Python) or npm (JS/TS). AI models
+invent plausible-but-nonexistent package names; an attacker can pre-register the
+name and ship malware. This catches that before `pip install` / `npm install`.
 
-Requires: requests  (pip install requests)
+Gating:
+  - package not found on its registry  -> BLOCK (exit 1)
+  - registry unreachable (network/5xx) -> WARN  (never blocks the build)
+
+False-positive controls:
+  - stdlib modules are ignored
+  - relative imports (`from . import x`) are ignored
+  - first-party / local modules (a dir with __init__.py, or a top-level .py)
+    are ignored
+  - common import->distribution aliases are mapped (PIL->pillow, yaml->PyYAML…)
+
+Usage:
+    python check_packages.py [ROOT] [--json OUT]
+
+ROOT defaults to $GITHUB_WORKSPACE, then the current directory. Passing ROOT
+explicitly is important inside the GitHub Action, where the script lives in the
+action's own checkout, not the caller's repository.
+
+Requires: stdlib only.
 """
 
+import argparse
 import ast
 import json
+import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -37,12 +60,49 @@ PYTHON_STDLIB = {
     "builtins", "__future__", "types", "numbers", "fractions", "cmath",
     "statistics", "secrets", "token", "tokenize", "keyword", "dis",
     "marshal", "compileall", "py_compile", "zipimport", "pkgutil",
-    "modulefinder", "runpy", "site", "sysconfig",
+    "modulefinder", "runpy", "site", "sysconfig", "venv", "ensurepip",
+}
+
+# ── Import name → PyPI distribution name (common mismatches) ─────────────────
+# Without this the guard false-positives on packages whose import name differs
+# from the name you `pip install`.
+IMPORT_TO_PYPI = {
+    "PIL": "pillow",
+    "yaml": "PyYAML",
+    "cv2": "opencv-python",
+    "sklearn": "scikit-learn",
+    "dotenv": "python-dotenv",
+    "bs4": "beautifulsoup4",
+    "git": "GitPython",
+    "jose": "python-jose",
+    "dateutil": "python-dateutil",
+    "attr": "attrs",
+    "OpenSSL": "pyOpenSSL",
+    "Crypto": "pycryptodome",
+    "psycopg2": "psycopg2-binary",
+    "serial": "pyserial",
+    "yaml_": "PyYAML",
+    "mcp": "mcp",
+}
+
+JS_GLOBS = ("*.js", "*.ts", "*.jsx", "*.tsx", "*.mjs", "*.cjs")
+SKIP_DIRS = {
+    "venv", ".venv", "env", ".env", "node_modules", ".git", "dist", "build",
+    "__pycache__", ".tox", ".mypy_cache", ".pytest_cache", "site-packages",
+    ".next", "out", "coverage",
 }
 
 
+def _skip(path: Path) -> bool:
+    return any(part in SKIP_DIRS for part in path.parts)
+
+
 def extract_python_imports(path: Path) -> set[str]:
-    """Return top-level package names imported in a Python file."""
+    """Return top-level, non-stdlib package names imported in a Python file.
+
+    Relative imports (`from . import x`, `from .mod import y`) are excluded
+    because `node.module` is None / handled by `level`.
+    """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
     except SyntaxError:
@@ -53,81 +113,185 @@ def extract_python_imports(path: Path) -> set[str]:
             for alias in node.names:
                 names.add(alias.name.split(".")[0])
         elif isinstance(node, ast.ImportFrom):
+            # level > 0 means a relative import — skip it entirely.
+            if node.level and node.level > 0:
+                continue
             if node.module:
                 names.add(node.module.split(".")[0])
     return names - PYTHON_STDLIB
 
 
 def extract_js_imports(path: Path) -> set[str]:
-    """Return package names from require/import statements in JS/TS files."""
+    """Return external package names from require/import statements (skips
+    relative paths starting with . or /)."""
     text = path.read_text(encoding="utf-8", errors="ignore")
     patterns = [
-        r'require\(["\'](@?[^./"\'][^"\']*)["\']',   # require('pkg')
-        r'from\s+["\'](@?[^./"\'][^"\']*)["\']',      # import ... from 'pkg'
+        r'require\(\s*["\'](@?[^./"\'][^"\']*)["\']',   # require('pkg')
+        r'from\s+["\'](@?[^./"\'][^"\']*)["\']',         # import ... from 'pkg'
+        r'import\s+["\'](@?[^./"\'][^"\']*)["\']',        # import 'pkg'
     ]
     names = set()
     for pat in patterns:
         for m in re.finditer(pat, text):
-            pkg = m.group(1)
-            # Normalise scoped packages: @scope/name → @scope/name (keep as-is)
-            names.add(pkg)
+            names.add(_npm_base(m.group(1)))
     return names
 
 
+def _npm_base(spec: str) -> str:
+    """Reduce an import specifier to its installable package name.
+    '@scope/pkg/sub' -> '@scope/pkg'; 'pkg/sub' -> 'pkg'."""
+    if spec.startswith("@"):
+        parts = spec.split("/")
+        return "/".join(parts[:2])
+    return spec.split("/")[0]
+
+
+def discover_first_party(root: Path) -> set[str]:
+    """Names that resolve to local code and must not be checked on a registry:
+    any directory containing __init__.py, plus top-level .py file stems."""
+    names: set[str] = set()
+    for init in root.rglob("__init__.py"):
+        if _skip(init):
+            continue
+        names.add(init.parent.name)
+    for py in root.glob("*.py"):
+        names.add(py.stem)
+    # JS first-party: the package.json "name", if present.
+    pkg_json = root / "package.json"
+    if pkg_json.is_file():
+        try:
+            name = json.loads(pkg_json.read_text(encoding="utf-8")).get("name")
+            if name:
+                names.add(_npm_base(name))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return names
+
+
+# ── Registry existence checks (tri-state, with retry + cache) ───────────────
+# Returns one of: "exists" | "missing" | "error"
+_STATUS_CACHE: dict[tuple[str, str], str] = {}
+
+
+def _query(url: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
+    last_was_error = False
+    for i in range(attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                return "exists" if resp.status == 200 else "missing"
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return "missing"
+            last_was_error = True   # 5xx / rate limit → retry
+        except (urllib.error.URLError, OSError):
+            last_was_error = True
+        if i < attempts - 1 and backoff:
+            time.sleep(backoff * (i + 1))
+    return "error" if last_was_error else "missing"
+
+
+def pypi_status(pkg: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
+    key = ("pypi", pkg)
+    if key not in _STATUS_CACHE:
+        _STATUS_CACHE[key] = _query(
+            f"https://pypi.org/pypi/{pkg}/json", attempts=attempts, backoff=backoff
+        )
+    return _STATUS_CACHE[key]
+
+
+def npm_status(pkg: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
+    key = ("npm", pkg)
+    if key not in _STATUS_CACHE:
+        encoded = pkg.replace("/", "%2F")
+        _STATUS_CACHE[key] = _query(
+            f"https://registry.npmjs.org/{encoded}", attempts=attempts, backoff=backoff
+        )
+    return _STATUS_CACHE[key]
+
+
+# Back-compat thin booleans (single attempt — used by older callers/tests).
 def pypi_exists(pkg: str) -> bool:
-    url = f"https://pypi.org/pypi/{pkg}/json"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
+    return pypi_status(pkg, attempts=1, backoff=0) == "exists"
 
 
 def npm_exists(pkg: str) -> bool:
-    encoded = pkg.replace("/", "%2F")
-    url = f"https://registry.npmjs.org/{encoded}"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
+    return npm_status(pkg, attempts=1, backoff=0) == "exists"
 
 
-def main() -> int:
-    repo_root = Path(__file__).parent.parent
-    failures: list[str] = []
+def scan(root: Path) -> dict:
+    """Scan a repo tree; return {'blocked': [...], 'warnings': [...], 'ok': [...]}."""
+    first_party = discover_first_party(root)
+    blocked: list[dict] = []
+    warnings: list[dict] = []
+    ok: list[str] = []
 
-    # ── Python files ────────────────────────────────────────────────────────
-    for py_file in repo_root.rglob("*.py"):
-        # Skip virtual envs and node_modules
-        if any(p in py_file.parts for p in ("venv", ".venv", "node_modules", ".git")):
+    def record(import_name: str, dist_name: str, status: str, registry: str, where: Path):
+        rel = str(where.relative_to(root)) if where.is_relative_to(root) else str(where)
+        if status == "missing":
+            blocked.append({"package": dist_name, "import": import_name,
+                            "registry": registry, "file": rel})
+        elif status == "error":
+            warnings.append({"package": dist_name, "import": import_name,
+                             "registry": registry, "file": rel,
+                             "reason": "registry unreachable"})
+        else:
+            ok.append(dist_name)
+
+    # Python
+    for py in root.rglob("*.py"):
+        if _skip(py):
             continue
-        for pkg in extract_python_imports(py_file):
-            if not pypi_exists(pkg):
-                print(f"  [FAIL] Python package not found on PyPI: '{pkg}'  ({py_file})")
-                failures.append(pkg)
-            else:
-                print(f"  [ OK ] {pkg}")
+        for name in extract_python_imports(py):
+            if name in first_party:
+                continue
+            dist = IMPORT_TO_PYPI.get(name, name)
+            record(name, dist, pypi_status(dist), "pypi", py)
 
-    # ── JS / TS files ────────────────────────────────────────────────────────
-    for js_file in repo_root.rglob("*.{js,ts,jsx,tsx,mjs,cjs}"):
-        if any(p in js_file.parts for p in ("node_modules", ".git", "dist", "build")):
-            continue
-        for pkg in extract_js_imports(js_file):
-            if not npm_exists(pkg):
-                print(f"  [FAIL] npm package not found: '{pkg}'  ({js_file})")
-                failures.append(pkg)
-            else:
-                print(f"  [ OK ] {pkg}")
+    # JS / TS — one rglob per extension (brace globs do NOT expand in rglob).
+    for pattern in JS_GLOBS:
+        for js in root.rglob(pattern):
+            if _skip(js):
+                continue
+            for name in extract_js_imports(js):
+                if name in first_party:
+                    continue
+                record(name, name, npm_status(name), "npm", js)
 
-    if failures:
-        print(f"\n❌  {len(failures)} hallucinated / non-existent package(s) found:")
-        for f in failures:
-            print(f"       - {f}")
-        print("\nThis is a hard block. Remove or replace these imports before merging.")
+    return {"blocked": blocked, "warnings": warnings, "ok": sorted(set(ok))}
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Anti-slopsquatting package guard.")
+    parser.add_argument(
+        "root",
+        nargs="?",
+        default=os.environ.get("GITHUB_WORKSPACE", os.getcwd()),
+        help="Repository root to scan (default: $GITHUB_WORKSPACE or cwd).",
+    )
+    parser.add_argument("--json", metavar="OUT", help="Write findings as JSON to OUT.")
+    args = parser.parse_args(argv)
+
+    root = Path(args.root).resolve()
+    result = scan(root)
+
+    for w in result["warnings"]:
+        print(f"  [WARN] {w['registry']} unreachable for '{w['package']}' ({w['file']})")
+    for b in result["blocked"]:
+        print(f"  [FAIL] {b['registry']} package not found: '{b['package']}'"
+              f"{f' (imported as {b['import']})' if b['import'] != b['package'] else ''}  ({b['file']})")
+
+    if args.json:
+        Path(args.json).write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+    if result["blocked"]:
+        print(f"\n❌  {len(result['blocked'])} hallucinated / non-existent package(s). "
+              "Hard block — remove or fix these before merging.")
         return 1
 
-    print("\n✅  All packages verified on their registries.")
+    if result["warnings"]:
+        print(f"\n⚠️  Verified with {len(result['warnings'])} registry warning(s) "
+              "(network issues — not blocking).")
+    print(f"\n✅  All resolvable packages verified ({len(result['ok'])} ok).")
     return 0
 
 

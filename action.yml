@@ -34,7 +34,9 @@ runs:
 
     - name: Stage 0 — Package existence check (anti-slopsquatting)
       shell: bash
-      run: python ${{ github.action_path }}/scripts/check_packages.py
+      # Pass the caller's workspace explicitly: the script lives in the action's
+      # own checkout (github.action_path), so it must be told which repo to scan.
+      run: python ${{ github.action_path }}/scripts/check_packages.py "$GITHUB_WORKSPACE"
 
     - name: Stage 0 — Secret scan (Gitleaks)
       uses: gitleaks/gitleaks-action@v2

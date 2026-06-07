@@ -16,5 +16,9 @@ node_modules/
 extensions/vscode/out/
 *.vsix
 
+# AI agent local config — never commit (machine paths + broad permissions)
+.claude/settings.local.json
+.claude/*.local.json
+
 # OS
 .DS_Store

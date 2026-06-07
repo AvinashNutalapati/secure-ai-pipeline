@@ -1,0 +1,18 @@
+{
+  "// note": "Safe, workspace-scoped Claude Code permissions. Copy to .claude/settings.local.json and adjust. Never grant Read access to your home directory or broad filesystem paths — that is the agent blast-radius risk this project scans for.",
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Bash(python3 -m pytest*)",
+      "Bash(npm test*)",
+      "Bash(git status*)",
+      "Bash(git diff*)"
+    ],
+    "deny": [
+      "Read(//Users/**)",
+      "Read(//home/**)",
+      "Read(/etc/**)",
+      "Bash(rm -rf*)"
+    ]
+  }
+}
