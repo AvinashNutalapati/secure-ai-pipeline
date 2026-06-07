@@ -13,7 +13,9 @@
     ".zap/",
     ".pre-commit-config.yaml",
     "action.yml",
-    ".github/workflows/security.yml"
+    ".github/workflows/security.yml",
+    "examples/",
+    "docs/"
   ],
   "scripts": {
     "test": "node cli/init.js --help"

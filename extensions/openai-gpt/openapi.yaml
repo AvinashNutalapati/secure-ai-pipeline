@@ -11,6 +11,8 @@ servers:
   # (e.g. `uvicorn extensions.claude_mcp.server:app`) behind HTTPS and put its URL here.
   - url: https://your-deployed-scanner.example.com
     description: Replace with your deployed scanner URL.
+security:
+  - ApiKeyAuth: []
 paths:
   /check_package:
     post:
@@ -85,6 +87,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/FullScanResponse"
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
   schemas:
     CheckPackageRequest:
       type: object

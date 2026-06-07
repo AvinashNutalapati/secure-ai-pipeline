@@ -32,10 +32,12 @@ with concrete fixes. Add `--html report.html` for a shareable report.
   …
 ```
 
-Try it on the bundled bad-on-purpose repo:
+Try it on the bad-on-purpose demo repo (scores 0/100):
 
 ```bash
-npx secure-ai-pipeline@latest scan examples/vulnerable-ai-workflow
+git clone https://github.com/AvinashNutalapati/secure-ai-pipeline
+cd secure-ai-pipeline
+npx secure-ai-pipeline scan examples/vulnerable-ai-workflow --html report.html
 ```
 
 ## Why this exists
@@ -87,14 +89,31 @@ rules, and pre-commit hooks into your repo. Idempotent.
 </details>
 
 <details>
-<summary><b>GitHub Action</b></summary>
+<summary><b>GitHub Action</b> (full workflow — copy to <code>.github/workflows/security.yml</code>)</summary>
 
 ```yaml
-- uses: AvinashNutalapati/secure-ai-pipeline@v2
-  with:
-    staging-url: ${{ vars.STAGING_URL }}   # optional, enables DAST
-    fail-on-warnings: "false"              # optional, block on WARN-level findings
+name: Secure AI Pipeline
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write   # required for SARIF upload to the Security tab
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: AvinashNutalapati/secure-ai-pipeline@v2
+        with:
+          staging-url: ${{ vars.STAGING_URL }}   # optional, enables DAST
+          fail-on-warnings: "false"              # optional, block on WARN findings
 ```
+
+The action runs the AI Blast Radius checkup plus package, secret, SAST, and SCA gates.
 </details>
 
 | # | Flaw | Caught by | Action |

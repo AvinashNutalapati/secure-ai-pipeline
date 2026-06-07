@@ -129,16 +129,19 @@ function printSuccess() {
 ${green("✅ Secure AI Pipeline installed.")}
 
 What just happened:
-  • .github/workflows/security.yml  — CI pipeline wired (runs on every push/PR)
+  • .github/workflows/security.yml  — CI pipeline + AI Blast Radius job
+  • scripts/blast_radius.py + scanners/ — AI IDE / Claude / MCP / Actions posture
   • scripts/check_packages.py       — anti-slopsquatting guard
-  • .semgrep/ai-insecure-defaults.yml — 7 custom SAST rules for AI code
+  • .semgrep/ai-insecure-defaults.yml — custom SAST rules for AI code
   • .pre-commit-config.yaml         — local hooks active
 
-One optional step:
-  Set STAGING_URL in GitHub → Settings → Variables → Actions
-  to enable DAST scanning against your staging environment.
+${bold("Next step — run the checkup now (local, no CI wait):")}
+  npx secure-ai-pipeline scan . --html report.html
 
-That's it. Push a commit to see the pipeline run.
+Then commit & push:
+  git add . && git commit -m "add secure-ai-pipeline" && git push
+
+Optional: set STAGING_URL in GitHub → Settings → Variables → Actions for DAST.
 `;
   console.log(summary);
 }

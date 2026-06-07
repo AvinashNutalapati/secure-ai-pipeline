@@ -104,6 +104,28 @@ def test_apply_allowlist_flags_unlisted_server():
     assert out["policy"]["gate_failed"] is True       # the new finding is HIGH
 
 
+def test_apply_exclude_drops_findings_by_glob():
+    findings = [
+        {"rule_id": "mcp-secret-env", "severity": "CRITICAL", "category": "MCP",
+         "title": "x", "detail": "", "fix": "", "file": "examples/vuln/mcp.json", "line": 0},
+        {"rule_id": "claude-broad-read", "severity": "CRITICAL", "category": "Claude",
+         "title": "x", "detail": "", "fix": "", "file": "src/app.py", "line": 0},
+    ]
+    policy = {"fail_on": ["critical"], "ignore": [], "exclude": ["examples/**"],
+              "github_actions": {}, "mcp": {}}
+    out = pol.apply(_report(findings), policy)
+    ids = {f["rule_id"] for f in out["findings"]}
+    assert ids == {"claude-broad-read"}      # examples/** dropped
+    assert out["policy"]["gate_failed"] is True   # the kept one is still critical
+
+
+def test_excluded_matches_prefix_and_glob():
+    assert pol._excluded("examples/x/mcp.json", ["examples/**"]) is True
+    assert pol._excluded("examples/x/mcp.json", ["examples"]) is True
+    assert pol._excluded(".claude/settings.local.json", [".claude/settings.local.json"]) is True
+    assert pol._excluded("src/app.py", ["examples/**", "demo/**"]) is False
+
+
 def test_apply_no_gate_when_clean():
     out = pol.apply(_report([]), {"fail_on": ["critical", "high"], "ignore": [],
                                   "github_actions": {}, "mcp": {}})

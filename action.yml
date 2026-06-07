@@ -1,5 +1,5 @@
 name: Secure AI Pipeline
-description: Security pipeline for AI-generated code — catches slopsquatting, secrets, CVEs, and insecure defaults.
+description: AI-assisted development security — AI Agent Blast Radius (AI IDEs, Claude, MCP, GitHub Actions) plus package, secret, SAST, and SCA checks.
 author: AvinashNutalapati
 
 branding:
@@ -37,6 +37,12 @@ runs:
       # Pass the caller's workspace explicitly: the script lives in the action's
       # own checkout (github.action_path), so it must be told which repo to scan.
       run: python ${{ github.action_path }}/scripts/check_packages.py "$GITHUB_WORKSPACE"
+
+    - name: Stage 0 — AI Agent Blast Radius (AI IDEs, Claude, MCP, Actions)
+      shell: bash
+      # Report-only by default; gates when the caller repo has a
+      # secure-ai-pipeline.yml policy with fail_on set.
+      run: python ${{ github.action_path }}/scripts/blast_radius.py "$GITHUB_WORKSPACE" --offline --no-color
 
     - name: Stage 0 — Secret scan (Gitleaks)
       uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9

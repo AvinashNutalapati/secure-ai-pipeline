@@ -19,6 +19,7 @@ parser that handles this flat schema; JSON policy files always work.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 
@@ -33,6 +34,7 @@ POLICY_FILENAMES = (
 DEFAULT_POLICY = {
     "fail_on": ["critical", "high"],
     "ignore": [],
+    "exclude": [],          # path globs whose findings are dropped (e.g. examples/**)
     "github_actions": {
         "require_sha_pinning": True,
         "block_pull_request_target": True,
@@ -190,10 +192,23 @@ def _grade(score: int) -> str:
             "C" if score >= 60 else "D" if score >= 40 else "F")
 
 
+def _excluded(file: str, patterns) -> bool:
+    f = (file or "").replace("\\", "/")
+    for raw in patterns or []:
+        p = str(raw).replace("\\", "/")
+        if fnmatch.fnmatch(f, p):
+            return True
+        base = p.rstrip("/*")          # "examples/**" -> "examples"
+        if base and (f == base or f.startswith(base + "/")):
+            return True
+    return False
+
+
 def apply(report: dict, policy: dict) -> dict:
-    """Return a new report with policy suppressions, allowlist findings, a
-    recomputed score, and a gate decision."""
+    """Return a new report with policy excludes/suppressions, allowlist findings,
+    a recomputed score, and a gate decision."""
     ignore = set(policy.get("ignore", []) or [])
+    exclude = policy.get("exclude", []) or []
     gha = policy.get("github_actions", {}) or {}
     mcp_pol = policy.get("mcp", {}) or {}
     allowed = set(mcp_pol.get("allowed_servers", []) or [])
@@ -202,6 +217,8 @@ def apply(report: dict, policy: dict) -> dict:
     for f in report.get("findings", []):
         rid = f.get("rule_id")
         if rid in ignore:
+            continue
+        if _excluded(f.get("file", ""), exclude):
             continue
         if rid == "gha-unpinned-action" and not gha.get("require_sha_pinning", True):
             continue
@@ -212,7 +229,7 @@ def apply(report: dict, policy: dict) -> dict:
     # MCP allowlist: any inventoried server not on the allowlist is a finding.
     if allowed:
         for f in report.get("findings", []):
-            if f.get("rule_id") == "mcp-server-inventory":
+            if f.get("rule_id") == "mcp-server-inventory" and not _excluded(f.get("file", ""), exclude):
                 name = f.get("title", "").split("configured:", 1)[-1].strip()
                 if name and name not in allowed:
                     kept.append({

@@ -73,7 +73,9 @@ def package_findings(root: Path) -> list[Finding]:
         ))
     for w in result["warnings"]:
         out.append(Finding(
-            "packages", "Dependency trust", "pkg-registry-warning", "LOW",
+            # INFO so a flaky/offline network ("couldn't check") never deducts
+            # from the score — only genuinely missing packages (CRITICAL) do.
+            "packages", "Dependency trust", "pkg-registry-warning", "INFO",
             f"Could not verify package: {w['package']}",
             f"{w['registry']} was unreachable while checking '{w['package']}'.",
             "Re-run when the registry is reachable.",
@@ -161,13 +163,22 @@ def main(argv=None) -> int:
     parser.add_argument("--policy", metavar="FILE", help="Path to a policy file.")
     parser.add_argument("--no-policy", action="store_true",
                         help="Ignore any secure-ai-pipeline.{yml,yaml,json}.")
+    parser.add_argument("--exclude", metavar="GLOBS", default="",
+                        help="Comma-separated path globs to drop (e.g. 'examples/**,demo/**').")
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
     report = assess(root, offline=args.offline)
-    if not args.no_policy:
-        report = policy_mod.apply(report, policy_mod.load_policy(root, args.policy))
+    cli_excludes = [g.strip() for g in args.exclude.split(",") if g.strip()]
+    if args.no_policy:
+        if cli_excludes:
+            report = policy_mod.apply(report, {"fail_on": [], "exclude": cli_excludes})
+    else:
+        pol = policy_mod.load_policy(root, args.policy)
+        if cli_excludes:
+            pol["exclude"] = list(pol.get("exclude", [])) + cli_excludes
+        report = policy_mod.apply(report, pol)
 
     print(render(report, color=not args.no_color))
     if args.json:

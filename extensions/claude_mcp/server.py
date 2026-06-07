@@ -13,9 +13,10 @@ or via the installed console script:
 
 from __future__ import annotations
 
+import os
 from typing import Literal, Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from . import rules
@@ -24,8 +25,20 @@ from .registry import check_package as _check_package
 app = FastAPI(
     title="Secure AI Pipeline MCP Server",
     description="Security scanner for AI-generated code.",
-    version="1.0.0",
+    version="2.0.0",
 )
+
+# Optional API-key auth. Set SAP_API_KEY in the deployment environment to require
+# an `X-API-Key` header on every scan endpoint. Unset → open (local/demo only).
+API_KEY = os.getenv("SAP_API_KEY")
+
+
+def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
+    if API_KEY and x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key.")
+
+
+_AUTH = [Depends(require_api_key)]
 
 
 # ── check_package ────────────────────────────────────────────────────────────
@@ -41,7 +54,7 @@ class CheckPackageResponse(BaseModel):
     warning: Optional[str] = None
 
 
-@app.post("/check_package", response_model=CheckPackageResponse)
+@app.post("/check_package", response_model=CheckPackageResponse, dependencies=_AUTH)
 def check_package(req: CheckPackageRequest) -> CheckPackageResponse:
     """Verify a package exists on PyPI or npm before importing it."""
     return CheckPackageResponse(**_check_package(req.package, req.registry))
@@ -58,7 +71,7 @@ class SastResponse(BaseModel):
     findings: list[dict]
 
 
-@app.post("/sast_scan", response_model=SastResponse)
+@app.post("/sast_scan", response_model=SastResponse, dependencies=_AUTH)
 def sast_scan(req: SastRequest) -> SastResponse:
     """Scan a code snippet for insecure patterns (injection, hardcoded secrets, etc.)."""
     findings = rules.sast_scan(req.code, req.language)
@@ -75,7 +88,7 @@ class ScaResponse(BaseModel):
     vulnerabilities: list[dict]
 
 
-@app.post("/sca_scan", response_model=ScaResponse)
+@app.post("/sca_scan", response_model=ScaResponse, dependencies=_AUTH)
 def sca_scan(req: ScaRequest) -> ScaResponse:
     """Check dependency versions for known CVEs."""
     findings = rules.sca_scan(req.requirements)
@@ -96,7 +109,7 @@ class FullScanResponse(BaseModel):
     summary: str
 
 
-@app.post("/full_scan", response_model=FullScanResponse)
+@app.post("/full_scan", response_model=FullScanResponse, dependencies=_AUTH)
 def full_scan(req: FullScanRequest) -> FullScanResponse:
     """Run package, SAST and SCA checks together and report a blocking decision."""
     sast_findings = rules.sast_scan(req.code, req.language)

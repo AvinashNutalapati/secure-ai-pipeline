@@ -22,6 +22,18 @@ curl http://localhost:8765/health     # -> {"status":"ok",...}
 
 Then put it behind HTTPS (the platform's TLS, or a reverse proxy).
 
+## Authentication (do this before exposing it publicly)
+
+The server enforces an API key when `SAP_API_KEY` is set in its environment;
+unset, the endpoints are open (local/demo only). Set it on your host:
+
+```bash
+docker run -p 8765:8765 -e SAP_API_KEY="$(openssl rand -hex 24)" sap-scanner
+```
+
+Then in the Custom GPT Action, choose **Authentication → API Key → Custom header
+`X-API-Key`** and paste the same value (the spec already declares this scheme).
+
 ## Wire it into the Custom GPT
 
 1. Edit [`openapi.yaml`](openapi.yaml) → set `servers[0].url` to your deployed HTTPS URL.
