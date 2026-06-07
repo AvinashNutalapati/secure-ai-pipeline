@@ -134,27 +134,23 @@ That's it. Push a commit to see the pipeline run.
 }
 
 function printHelp() {
-  console.log(`secure-ai-pipeline — security pipeline for AI-generated code
+  console.log(`secure-ai-pipeline — security for AI-assisted development
 
 Usage:
-  npx secure-ai-pipeline@latest init    Install the pipeline into the current repo
+  npx secure-ai-pipeline@latest <command>
 
-The 'init' command is idempotent — safe to run multiple times.`);
+Commands:
+  scan [DIR]     Run the AI Agent Blast Radius checkup on a repo (default: .)
+                   --html FILE   write an HTML report
+                   --json FILE   write a JSON report
+                   --offline     skip network package checks
+                   --fail-on L   exit non-zero on CRITICAL|HIGH|MEDIUM findings
+  init           Install the CI pipeline + hooks into the current repo (idempotent)
+  doctor         Check that prerequisites (python3, git) are available
+  help           Show this help`);
 }
 
-function run() {
-  const arg = (process.argv[2] || "init").toLowerCase();
-
-  if (arg === "--help" || arg === "-h" || arg === "help") {
-    printHelp();
-    process.exit(0);
-  }
-  if (arg !== "init") {
-    console.error(`Unknown command: ${arg}\n`);
-    printHelp();
-    process.exit(1);
-  }
-
+function runInit() {
   console.log(bold("\n🔒 Secure AI Pipeline — installer\n"));
 
   const lang = detectLang();
@@ -168,7 +164,33 @@ function run() {
   setupPreCommit();
 
   printSuccess();
-  process.exit(0);
 }
 
-run();
+function run() {
+  const arg = (process.argv[2] || "scan").toLowerCase();
+  const rest = process.argv.slice(3);
+
+  if (arg === "--help" || arg === "-h" || arg === "help") {
+    printHelp();
+    process.exit(0);
+  }
+  if (arg === "scan") {
+    process.exit(require("./scan.js").runScan(rest));
+  }
+  if (arg === "doctor") {
+    process.exit(require("./scan.js").runDoctor());
+  }
+  if (arg === "init") {
+    runInit();
+    process.exit(0);
+  }
+  console.error(`Unknown command: ${arg}\n`);
+  printHelp();
+  process.exit(1);
+}
+
+if (require.main === module) {
+  run();
+}
+
+module.exports = { runInit };

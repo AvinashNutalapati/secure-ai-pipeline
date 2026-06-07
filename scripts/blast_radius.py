@@ -151,6 +151,7 @@ def main(argv=None) -> int:
     parser.add_argument("root", nargs="?",
                         default=os.environ.get("GITHUB_WORKSPACE", os.getcwd()))
     parser.add_argument("--json", metavar="OUT", help="Write the full report as JSON.")
+    parser.add_argument("--html", metavar="OUT", help="Write an HTML report.")
     parser.add_argument("--offline", action="store_true",
                         help="Skip network package checks.")
     parser.add_argument("--fail-on", choices=["critical", "high", "medium"],
@@ -162,6 +163,10 @@ def main(argv=None) -> int:
     print(render(report, color=not args.no_color))
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if args.html:
+        import report as report_mod
+        Path(args.html).write_text(report_mod.render_html(report), encoding="utf-8")
+        print(f"  HTML report written to {args.html}")
 
     if args.fail_on:
         threshold = _SEV_RANK[args.fail_on.upper()]
