@@ -90,7 +90,7 @@ rules, and pre-commit hooks into your repo. Idempotent.
 <summary><b>GitHub Action</b></summary>
 
 ```yaml
-- uses: AvinashNutalapati/secure-ai-pipeline@v1
+- uses: AvinashNutalapati/secure-ai-pipeline@v2
   with:
     staging-url: ${{ vars.STAGING_URL }}   # optional, enables DAST
     fail-on-warnings: "false"              # optional, block on WARN-level findings
