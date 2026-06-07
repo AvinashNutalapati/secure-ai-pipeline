@@ -7,7 +7,7 @@
   },
   "files": [
     "cli/",
-    "scripts/",
+    "scripts/*.py",
     ".semgrep/",
     ".zap/",
     ".pre-commit-config.yaml",

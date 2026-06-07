@@ -1,0 +1,7 @@
+# Python bytecode / caches — never publish to npm
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local pipeline output
+pipeline-results.json
