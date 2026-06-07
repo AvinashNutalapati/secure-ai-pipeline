@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""
+AI Agent Blast Radius Score.
+
+Aggregates the AI-posture scanners (AI IDE rules, Claude permissions, MCP configs,
+GitHub Actions) — and, unless --offline, the anti-slopsquatting package guard —
+into one 0–100 score. 100 means minimal blast radius; lower means an attacker who
+gets a foothold (via prompt injection, a poisoned issue, a malicious MCP server,
+or a compromised action) can reach further.
+
+Usage:
+    python blast_radius.py [ROOT] [--json OUT] [--offline] [--fail-on LEVEL]
+
+ROOT defaults to $GITHUB_WORKSPACE or cwd. --fail-on {critical,high,medium} makes
+the process exit 1 when a finding at or above that severity exists (for CI). By
+default it is report-only (exit 0).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from scanners import SEVERITIES, SEVERITY_WEIGHT  # noqa: E402
+from scanners import ai_ide, claude_settings, github_actions, mcp  # noqa: E402
+from scanners.base import Finding  # noqa: E402
+
+OFFLINE_SCANNERS = {
+    "ai_ide": ai_ide.scan,
+    "claude": claude_settings.scan,
+    "mcp": mcp.scan,
+    "github_actions": github_actions.scan,
+}
+
+_SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}  # CRITICAL=0 .. INFO=4
+
+
+def run_scanners(root: Path, include=None) -> list[Finding]:
+    findings: list[Finding] = []
+    for name, fn in OFFLINE_SCANNERS.items():
+        if include and name not in include:
+            continue
+        try:
+            findings.extend(fn(root))
+        except Exception as exc:  # a scanner crash must not sink the whole run
+            findings.append(Finding(
+                name, name.upper(), f"{name}-scanner-error", "LOW",
+                f"{name} scanner error", str(exc),
+                "Report this as a bug.", "",
+            ))
+    return findings
+
+
+def package_findings(root: Path) -> list[Finding]:
+    """Convert the (network) anti-slopsquatting guard into Findings."""
+    import check_packages
+    result = check_packages.scan(root)
+    out: list[Finding] = []
+    for b in result["blocked"]:
+        out.append(Finding(
+            "packages", "Dependency trust", "pkg-hallucinated", "CRITICAL",
+            f"Hallucinated/non-existent package: {b['package']}",
+            f"'{b['package']}' (imported in {b['file']}) does not exist on "
+            f"{b['registry']} — a slopsquatting foothold.",
+            "Remove or correct the import; verify the real package name.",
+            b["file"],
+        ))
+    for w in result["warnings"]:
+        out.append(Finding(
+            "packages", "Dependency trust", "pkg-registry-warning", "LOW",
+            f"Could not verify package: {w['package']}",
+            f"{w['registry']} was unreachable while checking '{w['package']}'.",
+            "Re-run when the registry is reachable.",
+            w["file"],
+        ))
+    return out
+
+
+def score_of(findings: list[Finding]) -> int:
+    penalty = sum(SEVERITY_WEIGHT.get(f.severity, 0) for f in findings)
+    return max(0, 100 - penalty)
+
+
+def grade_of(score: int) -> str:
+    return ("A" if score >= 90 else "B" if score >= 75 else
+            "C" if score >= 60 else "D" if score >= 40 else "F")
+
+
+def assess(root: Path, *, offline: bool = False, include=None) -> dict:
+    findings = run_scanners(root, include=include)
+    if not offline:
+        try:
+            findings.extend(package_findings(root))
+        except Exception:
+            pass
+    findings.sort(key=lambda f: (_SEV_RANK.get(f.severity, 99), f.category, f.file))
+
+    by_sev = {s: 0 for s in SEVERITIES}
+    by_cat: dict[str, dict] = {}
+    for f in findings:
+        by_sev[f.severity] = by_sev.get(f.severity, 0) + 1
+        cat = by_cat.setdefault(f.category, {s: 0 for s in SEVERITIES})
+        cat[f.severity] += 1
+
+    sc = score_of(findings)
+    return {
+        "score": sc,
+        "grade": grade_of(sc),
+        "counts": by_sev,
+        "by_category": by_cat,
+        "findings": [f.to_dict() for f in findings],
+    }
+
+
+# ── text rendering ──────────────────────────────────────────────────────────
+_C = {"CRITICAL": "\033[91m\033[1m", "HIGH": "\033[91m", "MEDIUM": "\033[93m",
+      "LOW": "\033[2m", "INFO": "\033[2m", "_": "\033[0m", "B": "\033[1m"}
+
+
+def render(report: dict, color: bool = True) -> str:
+    def c(k, s):
+        return f"{_C[k]}{s}{_C['_']}" if color else s
+    out = []
+    sc, gr = report["score"], report["grade"]
+    out.append("")
+    out.append(c("B", f"  AI Agent Blast Radius Score: {sc}/100  (grade {gr})"))
+    out.append(c("LOW", "  100 = minimal blast radius. Higher is safer."))
+    counts = report["counts"]
+    summary = "  ".join(f"{counts[s]} {s.lower()}" for s in SEVERITIES if counts[s])
+    out.append("  " + (summary or "no findings"))
+    out.append("")
+    for f in report["findings"]:
+        if f["severity"] == "INFO":
+            continue
+        loc = f"{f['file']}:{f['line']}" if f.get("line") else f.get("file", "")
+        out.append(f"  {c(f['severity'], '● ' + f['severity'])}  {f['title']}")
+        out.append(c("LOW", f"      {loc}"))
+        out.append(f"      {f['detail']}")
+        out.append(c("LOW", f"      fix: {f['fix']}"))
+        out.append("")
+    return "\n".join(out)
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="AI Agent Blast Radius Score.")
+    parser.add_argument("root", nargs="?",
+                        default=os.environ.get("GITHUB_WORKSPACE", os.getcwd()))
+    parser.add_argument("--json", metavar="OUT", help="Write the full report as JSON.")
+    parser.add_argument("--offline", action="store_true",
+                        help="Skip network package checks.")
+    parser.add_argument("--fail-on", choices=["critical", "high", "medium"],
+                        help="Exit 1 if a finding at/above this severity exists.")
+    parser.add_argument("--no-color", action="store_true")
+    args = parser.parse_args(argv)
+
+    report = assess(Path(args.root).resolve(), offline=args.offline)
+    print(render(report, color=not args.no_color))
+    if args.json:
+        Path(args.json).write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    if args.fail_on:
+        threshold = _SEV_RANK[args.fail_on.upper()]
+        worst = min((_SEV_RANK[f["severity"]] for f in report["findings"]), default=99)
+        if worst <= threshold:
+            print(f"  ⛔ blast-radius gate: finding at/above {args.fail_on.upper()}.")
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

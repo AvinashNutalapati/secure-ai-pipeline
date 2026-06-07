@@ -1,0 +1,12 @@
+{
+  "// note": "DELIBERATELY UNSAFE demo fixture for the blast-radius scanner.",
+  "defaultMode": "bypassPermissions",
+  "permissions": {
+    "allow": [
+      "Read(//Users/**)",
+      "Bash(*)",
+      "Bash(rm -rf /tmp/*)",
+      "WebFetch(*)"
+    ]
+  }
+}

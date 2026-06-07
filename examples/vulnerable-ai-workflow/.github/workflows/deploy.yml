@@ -1,0 +1,14 @@
+# DELIBERATELY UNSAFE demo fixture for the GitHub Actions scanner.
+name: deploy
+on:
+  pull_request_target:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: some-org/risky-action@main
+      - name: Greet PR
+        run: echo "Building PR ${{ github.event.pull_request.title }}"
