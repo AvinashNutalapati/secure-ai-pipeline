@@ -110,12 +110,10 @@ components:
           type: boolean
           description: True if the package was found on the registry.
         latest_version:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Latest published version, when the package exists.
         warning:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Slopsquatting/network warning when the package was not found.
     SastRequest:
       type: object
