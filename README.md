@@ -6,6 +6,9 @@
 
 [![CI](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/ci.yml)
 [![Security Pipeline](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/security.yml/badge.svg)](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/security.yml)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/AvinashNutalapati1.secure-ai-pipeline?label=VS%20Code%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/AvinashNutalapati1.secure-ai-pipeline?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline)
+[![Use this template](https://img.shields.io/badge/Use%20this-template-2ea44f?logo=github)](https://github.com/AvinashNutalapati/secure-ai-pipeline/generate)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
@@ -70,7 +73,8 @@ See [`demo/DEMO.md`](demo/DEMO.md) for a deliberately-vulnerable app that trips 
 ## IDE & AI integrations
 
 - **VS Code / Cursor** — inline diagnostics + quick fixes as you save.
-  Install: search **"Secure AI Pipeline"** in the Extensions panel. ([details](extensions/vscode/README.md))
+  Install from the [**Marketplace**](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline)
+  or search **"Secure AI Pipeline"** in the Extensions panel. ([details](extensions/vscode/README.md))
 - **Claude Code (MCP)** — scan packages and code mid-session:
   `claude mcp add secure-ai-pipeline -- uvicorn extensions.claude_mcp.server:app --port 8765` ([details](extensions/claude_mcp/README.md))
 - **OpenAI Custom GPT** — paste [`extensions/openai-gpt/openapi.yaml`](extensions/openai-gpt/openapi.yaml)
