@@ -1,0 +1,22 @@
+# Secure AI Pipeline — workflow security policy.
+# Copy to your repo root as `secure-ai-pipeline.yml`. `scan` picks it up
+# automatically and uses it to gate (exit non-zero) in CI.
+
+# Severities that fail the build.
+fail_on:
+  - critical
+  - high
+
+# Rule IDs to suppress (use sparingly, and say why).
+ignore:
+  - gha-unpinned-action   # we pin via Dependabot instead
+
+github_actions:
+  require_sha_pinning: true
+  block_pull_request_target: true
+
+mcp:
+  # If set, any MCP server not on this list is flagged.
+  allowed_servers:
+    - github-readonly
+    - docs-search

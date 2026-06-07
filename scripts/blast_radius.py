@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scanners import SEVERITIES, SEVERITY_WEIGHT  # noqa: E402
 from scanners import ai_ide, claude_settings, github_actions, mcp  # noqa: E402
 from scanners.base import Finding  # noqa: E402
+import policy as policy_mod  # noqa: E402
 
 OFFLINE_SCANNERS = {
     "ai_ide": ai_ide.scan,
@@ -155,11 +156,19 @@ def main(argv=None) -> int:
     parser.add_argument("--offline", action="store_true",
                         help="Skip network package checks.")
     parser.add_argument("--fail-on", choices=["critical", "high", "medium"],
-                        help="Exit 1 if a finding at/above this severity exists.")
+                        help="Exit 1 if a finding at/above this severity exists "
+                             "(overrides the policy file's fail_on).")
+    parser.add_argument("--policy", metavar="FILE", help="Path to a policy file.")
+    parser.add_argument("--no-policy", action="store_true",
+                        help="Ignore any secure-ai-pipeline.{yml,yaml,json}.")
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
 
-    report = assess(Path(args.root).resolve(), offline=args.offline)
+    root = Path(args.root).resolve()
+    report = assess(root, offline=args.offline)
+    if not args.no_policy:
+        report = policy_mod.apply(report, policy_mod.load_policy(root, args.policy))
+
     print(render(report, color=not args.no_color))
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -168,12 +177,17 @@ def main(argv=None) -> int:
         Path(args.html).write_text(report_mod.render_html(report), encoding="utf-8")
         print(f"  HTML report written to {args.html}")
 
+    # CLI --fail-on wins; otherwise honor the policy gate.
     if args.fail_on:
         threshold = _SEV_RANK[args.fail_on.upper()]
         worst = min((_SEV_RANK[f["severity"]] for f in report["findings"]), default=99)
         if worst <= threshold:
             print(f"  ⛔ blast-radius gate: finding at/above {args.fail_on.upper()}.")
             return 1
+    elif report.get("policy", {}).get("gate_failed"):
+        by = ", ".join(report["policy"]["triggered_by"])
+        print(f"  ⛔ policy gate failed (fail_on: {by}).")
+        return 1
     return 0
 
 
