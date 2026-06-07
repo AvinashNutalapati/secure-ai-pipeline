@@ -52,6 +52,7 @@ opens a "what to do next" issue, and the pipeline is live on your first push.
 - uses: AvinashNutalapati/secure-ai-pipeline@v1
   with:
     staging-url: ${{ vars.STAGING_URL }}   # optional, enables DAST
+    fail-on-warnings: "false"              # optional, set "true" to block on WARN-level findings
 ```
 </details>
 

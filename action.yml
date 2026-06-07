@@ -42,12 +42,15 @@ runs:
         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
 
     - name: Stage 1 — SAST (Semgrep)
-      uses: returntocorp/semgrep-action@v1
-      with:
-        config: >
-          p/python p/javascript p/security-audit
-          ${{ github.action_path }}/.semgrep/ai-insecure-defaults.yml
-        generateSarif: "1"
+      shell: bash
+      run: |
+        pip install semgrep --quiet
+        semgrep scan \
+          --config p/python \
+          --config p/javascript \
+          --config p/security-audit \
+          --config ${{ github.action_path }}/.semgrep/ai-insecure-defaults.yml \
+          --sarif --output semgrep.sarif
 
     - name: Upload Semgrep SARIF
       if: always()
@@ -55,13 +58,19 @@ runs:
       with:
         sarif_file: semgrep.sarif
 
+    - name: Stage 1 — SAST gate (block on errors; warnings only if fail-on-warnings)
+      shell: bash
+      env:
+        FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
+      run: python ${{ github.action_path }}/scripts/sarif_gate.py semgrep.sarif --label Semgrep
+
     - name: Stage 1 — SCA + IaC (Trivy)
       uses: aquasecurity/trivy-action@0.20.0
       with:
         scan-type: fs
         format: sarif
         output: trivy.sarif
-        severity: CRITICAL,HIGH
+        severity: ${{ inputs.fail-on-warnings == 'true' && 'CRITICAL,HIGH,MEDIUM,LOW' || 'CRITICAL,HIGH' }}
         exit-code: "1"
         ignore-unfixed: true
 
