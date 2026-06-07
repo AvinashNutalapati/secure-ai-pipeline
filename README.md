@@ -1,98 +1,133 @@
 # Secure AI Pipeline
 
-> A drop-in security pipeline for developers who build with AI coding assistants
-> (Cursor, Copilot, Claude Code) — it catches the failure modes those tools produce
-> before they reach production.
+> Security for AI-assisted development. A 5-minute checkup for developers shipping
+> production code with Cursor, Copilot, Claude Code, and MCP — it finds the hidden
+> **blast radius** of your AI coding workflow before it reaches production.
 
 [![CI](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/ci.yml)
 [![Security Pipeline](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/security.yml/badge.svg)](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/security.yml)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/AvinashNutalapati1.secure-ai-pipeline?label=VS%20Code%20Marketplace&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/AvinashNutalapati1.secure-ai-pipeline?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline)
 [![Use this template](https://img.shields.io/badge/Use%20this-template-2ea44f?logo=github)](https://github.com/AvinashNutalapati/secure-ai-pipeline/generate)
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
-## The problem
+## Quick start — the 5-minute checkup
 
-AI coding assistants are fast, but they fail in specific, repeatable ways: they hardcode
-secrets, ship insecure defaults (`debug=True`, `verify=False`, wildcard CORS), build SQL
-with f-strings, and pin dependencies riddled with known CVEs. Generic DevSecOps templates
-catch some of this — but not the most dangerous one.
+```bash
+npx secure-ai-pipeline@latest scan .
+```
 
-The headline failure is **slopsquatting**. AI models confidently invent plausible package
-names that don't exist. An attacker pre-registers the invented name on PyPI/npm and uploads
-malware. The next `pip install` silently pulls it in. This pipeline's anti-slopsquatting
-guard resolves every imported package against its registry and hard-blocks anything that
-doesn't exist — the layer no other tool ships.
+Runs locally (no code leaves your machine) and prints an **AI Agent Blast Radius
+Score** — how far an attacker who gets a foothold in your AI workflow can reach —
+with concrete fixes. Add `--html report.html` for a shareable report.
 
-## Install
+```text
+  AI Agent Blast Radius Score: 0/100  (grade F)
+  4 critical  11 high  2 medium
 
-<details open>
-<summary><b>Option A — one command (npx)</b></summary>
+  ● CRITICAL  MCP server 'github' receives secrets via env   mcp.json
+  ● CRITICAL  Claude can read outside the workspace          .claude/settings.json
+  ● CRITICAL  Workflow uses pull_request_target              .github/workflows/deploy.yml
+  ● HIGH      Cursor rule has a risky directive (auto-execution)  .cursorrules
+  …
+```
+
+Try it on the bundled bad-on-purpose repo:
+
+```bash
+npx secure-ai-pipeline@latest scan examples/vulnerable-ai-workflow
+```
+
+## Why this exists
+
+AI coding assistants don't just write the occasional insecure line — they widen the
+**attack surface around how you develop**. Untrusted text from issues, docs, repo
+rules, and MCP tool output can steer an agent that has access to your files,
+terminal, secrets, and deploy pipeline. Most AppSec tools scan code *after* it
+lands; very few look at the **seam** between the assistant, the laptop, the repo,
+MCP servers, and CI. That seam is what this project owns.
+
+## What the blast-radius checkup finds
+
+| Surface | Scanner | Examples |
+|---|---|---|
+| **AI IDE rules** | `ai_ide` | `.cursorrules`/Cline/Windsurf/Copilot rules that auto-run, skip approval, `curl\|bash`, or contain prompt-injection overrides |
+| **Claude permissions** | `claude` | home/root reads (`Read(//Users/**)`), wildcard `Bash(*)`, `rm -rf`, `bypassPermissions` |
+| **MCP configs** | `mcp` | secrets handed to servers, `bash`/`curl\|bash` startup, `/` filesystem mounts, unauthenticated remotes |
+| **GitHub Actions** | `github_actions` | unpinned actions (tj-actions lesson), `pull_request_target`, `github.event` script injection |
+| **Dependency trust** | `packages` | hallucinated / slopsquatted imports that don't exist on PyPI/npm |
+
+Docs: [threat model](docs/threat-model.md) · [AI tool risk](docs/ai-tool-risk.md) ·
+[MCP hardening](docs/mcp-hardening.md) · [privacy](docs/privacy.md).
+
+### Gate it in CI
+
+Drop a [`secure-ai-pipeline.yml`](examples/secure-ai-pipeline.example.yml) policy at
+your repo root to turn the checkup into a build gate (`fail_on`, rule `ignore`,
+`mcp.allowed_servers`, action-pinning toggles). Without a policy file, `scan` is
+report-only and friendly.
+
+## The code-security pipeline (still here)
+
+Beyond workflow posture, the original CI pipeline catches AI-generated **code**
+flaws. Install it with `init`, the template, or the Action:
+
+<details>
+<summary><b>npx installer</b></summary>
 
 ```bash
 npx secure-ai-pipeline@latest init
 ```
-
-Drops the CI workflow, the anti-slopsquatting guard, the custom SAST rules, and the
-pre-commit hooks into your repo. Idempotent — safe to re-run.
+Drops the CI workflow, anti-slopsquatting guard, AI-posture scanners, custom SAST
+rules, and pre-commit hooks into your repo. Idempotent.
 </details>
 
 <details>
-<summary><b>Option B — GitHub template (one click)</b></summary>
-
-Click **Use this template** on the repo page. A setup workflow personalises the README,
-opens a "what to do next" issue, and the pipeline is live on your first push.
+<summary><b>GitHub template</b> — click <b>Use this template</b>, the pipeline is pre-wired.</summary>
 </details>
 
 <details>
-<summary><b>Option C — GitHub Action (4 lines)</b></summary>
+<summary><b>GitHub Action</b></summary>
 
 ```yaml
 - uses: AvinashNutalapati/secure-ai-pipeline@v1
   with:
     staging-url: ${{ vars.STAGING_URL }}   # optional, enables DAST
-    fail-on-warnings: "false"              # optional, set "true" to block on WARN-level findings
+    fail-on-warnings: "false"              # optional, block on WARN-level findings
 ```
 </details>
 
-## What gets caught
-
 | # | Flaw | Caught by | Action |
 |---|------|-----------|--------|
-| F1 | Hallucinated package import (doesn't exist on PyPI/npm) | `check_packages.py` (Stage 0) | Hard block |
-| F2 | Hardcoded API key / secret | Gitleaks (Stage 0) | Hard block |
-| F3 | SQL injection via f-string | Semgrep `sql-injection-fstring` (Stage 1) | Block |
-| F4 | `app.run(debug=True)` | Semgrep `flask-debug-true` (Stage 1) | Block |
-| F5 | Wildcard CORS (`origins="*"`) | Semgrep `wildcard-cors` (Stage 1) | Warn |
-| F6 | TLS `verify=False` | Semgrep `tls-verify-false` (Stage 1) | Block |
-| F7 | `subprocess(..., shell=True)` | Semgrep `subprocess-shell-true` (Stage 1) | Block |
-| F8 | Known-CVE dependency (e.g. Flask 1.0) | Trivy SCA (Stage 1) | Block |
+| F1 | Hallucinated package import (PyPI/npm) | `check_packages.py` | Hard block |
+| F2 | Hardcoded API key / secret | Gitleaks | Hard block |
+| F3 | SQL injection via f-string | Semgrep `sql-injection-fstring` | Block |
+| F4 | `app.run(debug=True)` | Semgrep `flask-debug-true` | Block |
+| F5 | Wildcard CORS (`origins="*"`) | Semgrep `wildcard-cors` | Warn |
+| F6 | TLS `verify=False` | Semgrep `tls-verify-false` | Block |
+| F7 | `subprocess(..., shell=True)` | Semgrep `subprocess-shell-true` | Block |
+| F8 | Known-CVE dependency (e.g. Flask 1.0) | Trivy SCA | Block |
 
-See [`demo/DEMO.md`](demo/DEMO.md) for a deliberately-vulnerable app that trips every gate.
+See [`demo/DEMO.md`](demo/DEMO.md) for the deliberately-vulnerable app that trips every gate.
 
 ## IDE & AI integrations
 
 - **VS Code / Cursor** — inline diagnostics + quick fixes as you save.
   Install from the [**Marketplace**](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline)
-  or search **"Secure AI Pipeline"** in the Extensions panel. ([details](extensions/vscode/README.md))
+  or search **"Secure AI Pipeline"**. ([details](extensions/vscode/README.md))
 - **Claude Code (MCP)** — scan packages and code mid-session:
   `claude mcp add secure-ai-pipeline -- python -m extensions.claude_mcp.mcp_server` ([details](extensions/claude_mcp/README.md))
-- **OpenAI Custom GPT** — paste [`extensions/openai-gpt/openapi.yaml`](extensions/openai-gpt/openapi.yaml)
-  as an Action and the [instructions](extensions/openai-gpt/GPT_INSTRUCTIONS.md) as the system prompt.
+- **OpenAI Custom GPT** — deploy [`extensions/claude_mcp/server.py`](extensions/openai-gpt/DEPLOY.md)
+  and add [`openapi.yaml`](extensions/openai-gpt/openapi.yaml) as an Action.
 
-## Gate architecture
+## CLI
 
-```
-Stage 0 ──► secrets-scan    ← Gitleaks (HARD BLOCK on any leak)
-         ──► package-check  ← check_packages.py (HARD BLOCK on hallucinated deps)
-                  │
-                  ▼  (only if Stage 0 passes)
-Stage 1 ──► sast            ← Semgrep + AI insecure-defaults ruleset (BLOCK on high-confidence)
-         ──► sca-iac        ← Trivy (BLOCK on fixable Critical/High CVEs)
-                  │
-                  ▼  (only if Stage 1 passes)
-Stage 2 ──► dast            ← ZAP baseline against STAGING_URL (report only, never blocks)
+```bash
+npx secure-ai-pipeline scan .            # AI blast-radius checkup (default command)
+npx secure-ai-pipeline scan . --html report.html --json report.json
+npx secure-ai-pipeline scan . --fail-on high     # gate in CI
+npx secure-ai-pipeline init              # install the CI pipeline + hooks
+npx secure-ai-pipeline doctor            # check prerequisites
 ```
 
 ## Contributing

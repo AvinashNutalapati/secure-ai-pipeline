@@ -19,12 +19,12 @@ jobs:
     name: "🔑 Secrets Scan (Gitleaks)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0          # full history for leak detection
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Gitleaks exits non-zero on any leak → job fails → pipeline blocks
@@ -36,10 +36,10 @@ jobs:
     name: "📦 Package Existence Check (anti-slopsquatting)"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
 
@@ -51,6 +51,24 @@ jobs:
         # Exits 1 if any dep name is unresolvable on PyPI or npm
 
   # ─────────────────────────────────────────────────────────────
+  # AI workflow posture — Blast Radius Score (report-only unless a
+  # secure-ai-pipeline.yml policy file is present, which makes it gate)
+  # ─────────────────────────────────────────────────────────────
+  ai-posture:
+    name: "🤖 AI Blast Radius"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: AI Agent Blast Radius checkup
+        run: python scripts/blast_radius.py "$GITHUB_WORKSPACE" --offline --no-color
+
+  # ─────────────────────────────────────────────────────────────
   # STAGE 1 — SAST (Semgrep — hard block on high-confidence)
   # ─────────────────────────────────────────────────────────────
   sast:
@@ -58,10 +76,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [secrets-scan, package-check]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.12"
 
@@ -79,7 +97,7 @@ jobs:
 
       - name: Upload SARIF to GitHub
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
         with:
           sarif_file: semgrep.sarif
 
@@ -95,10 +113,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [secrets-scan, package-check]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Trivy — filesystem scan (deps + IaC)
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@b2933f565dbc598b29947660e66259e3c7bc8561 # v0.20.0
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -110,7 +128,7 @@ jobs:
 
       - name: Upload SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
         with:
           sarif_file: trivy-fs.sarif
 
@@ -124,10 +142,10 @@ jobs:
     # Only run if a staging URL is configured
     if: ${{ vars.STAGING_URL != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@66042c8e7e24680119199a017e5b0e8603bf4dae # v0.12.0
         with:
           target: ${{ vars.STAGING_URL }}
           rules_file_name: ".zap/rules.tsv"
@@ -136,7 +154,7 @@ jobs:
 
       - name: Upload ZAP report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: zap-report
           path: report_html.html
