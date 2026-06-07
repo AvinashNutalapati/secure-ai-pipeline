@@ -77,7 +77,7 @@ See [`demo/DEMO.md`](demo/DEMO.md) for a deliberately-vulnerable app that trips 
   Install from the [**Marketplace**](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline)
   or search **"Secure AI Pipeline"** in the Extensions panel. ([details](extensions/vscode/README.md))
 - **Claude Code (MCP)** — scan packages and code mid-session:
-  `claude mcp add secure-ai-pipeline -- uvicorn extensions.claude_mcp.server:app --port 8765` ([details](extensions/claude_mcp/README.md))
+  `claude mcp add secure-ai-pipeline -- python -m extensions.claude_mcp.mcp_server` ([details](extensions/claude_mcp/README.md))
 - **OpenAI Custom GPT** — paste [`extensions/openai-gpt/openapi.yaml`](extensions/openai-gpt/openapi.yaml)
   as an Action and the [instructions](extensions/openai-gpt/GPT_INSTRUCTIONS.md) as the system prompt.
 

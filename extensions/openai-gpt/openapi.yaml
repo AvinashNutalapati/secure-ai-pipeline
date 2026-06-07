@@ -2,35 +2,37 @@ openapi: 3.1.0
 info:
   title: Secure AI Pipeline
   description: >-
-    Security scanner for AI-generated code. Checks package names against public
-    registries, scans snippets for insecure defaults, and reports known CVEs in
-    dependencies. All operations are read-only.
+    Security scanner for AI-generated code. Verifies package names against public
+    registries (anti-slopsquatting), scans snippets for insecure defaults, and
+    reports known CVEs in pinned dependencies. All operations are read-only.
   version: 1.0.0
 servers:
-  - url: https://api.secure-ai-pipeline.dev
+  # GPT Actions require a public HTTPS host. Deploy extensions/claude_mcp/server.py
+  # (e.g. `uvicorn extensions.claude_mcp.server:app`) behind HTTPS and put its URL here.
+  - url: https://your-deployed-scanner.example.com
     description: Replace with your deployed scanner URL.
 paths:
-  /scan/packages:
+  /check_package:
     post:
-      operationId: scanPackages
-      summary: Verify package names exist on their registries (anti-slopsquatting).
+      operationId: checkPackage
+      summary: Verify a package exists on PyPI or npm (anti-slopsquatting).
       x-openai-isConsequential: false
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/PackagesRequest"
+              $ref: "#/components/schemas/CheckPackageRequest"
       responses:
         "200":
-          description: Scan result.
+          description: Existence result for the package.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ScanResult"
-  /scan/sast:
+                $ref: "#/components/schemas/CheckPackageResponse"
+  /sast_scan:
     post:
-      operationId: scanSast
+      operationId: sastScan
       summary: Scan a code snippet for insecure patterns.
       x-openai-isConsequential: false
       requestBody:
@@ -41,15 +43,33 @@ paths:
               $ref: "#/components/schemas/SastRequest"
       responses:
         "200":
-          description: Scan result.
+          description: SAST findings.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ScanResult"
-  /scan/full:
+                $ref: "#/components/schemas/SastResponse"
+  /sca_scan:
     post:
-      operationId: scanFull
-      summary: Run package, SAST and SCA checks together.
+      operationId: scaScan
+      summary: Check pinned dependency versions for known CVEs.
+      x-openai-isConsequential: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScaRequest"
+      responses:
+        "200":
+          description: Known CVEs for the supplied dependencies.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScaResponse"
+  /full_scan:
+    post:
+      operationId: fullScan
+      summary: Run package, SAST and SCA checks together and report a blocking decision.
       x-openai-isConsequential: false
       requestBody:
         required: true
@@ -59,57 +79,133 @@ paths:
               $ref: "#/components/schemas/FullRequest"
       responses:
         "200":
-          description: Scan result.
+          description: Combined scan result with a blocking decision.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ScanResult"
+                $ref: "#/components/schemas/FullScanResponse"
 components:
   schemas:
-    PackagesRequest:
+    CheckPackageRequest:
       type: object
       required:
-        - packages
+        - package
       properties:
-        packages:
-          type: array
-          items:
-            type: string
-          description: Package names to verify against PyPI / npm.
+        package:
+          type: string
+          description: Package name to verify.
+        registry:
+          type: string
+          enum:
+            - pypi
+            - npm
+          default: pypi
+          description: Registry to check the package against.
+    CheckPackageResponse:
+      type: object
+      required:
+        - exists
+      properties:
+        exists:
+          type: boolean
+          description: True if the package was found on the registry.
+        latest_version:
+          type: string
+          nullable: true
+          description: Latest published version, when the package exists.
+        warning:
+          type: string
+          nullable: true
+          description: Slopsquatting/network warning when the package was not found.
     SastRequest:
       type: object
       required:
         - code
-        - language
       properties:
         code:
           type: string
           description: Source code to scan.
-        language:
-          type: string
-          enum:
-            - python
-            - javascript
-          description: Language of the snippet.
-    FullRequest:
-      type: object
-      required:
-        - code
-        - requirements
-      properties:
-        code:
-          type: string
-          description: Source code to scan.
-        requirements:
-          type: string
-          description: Raw requirements.txt (or package.json) content.
         language:
           type: string
           enum:
             - python
             - javascript
           default: python
-    Finding:
+          description: Language of the snippet.
+    SastResponse:
+      type: object
+      required:
+        - findings
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/SastFinding"
+    ScaRequest:
+      type: object
+      required:
+        - requirements
+      properties:
+        requirements:
+          type: string
+          description: Raw requirements.txt content (one pinned dependency per line).
+    ScaResponse:
+      type: object
+      required:
+        - vulnerabilities
+      properties:
+        vulnerabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScaFinding"
+    FullRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          default: ""
+          description: Source code to scan.
+        requirements:
+          type: string
+          default: ""
+          description: Raw requirements.txt content.
+        language:
+          type: string
+          enum:
+            - python
+            - javascript
+          default: python
+    FullScanResponse:
+      type: object
+      required:
+        - findings
+        - blocked
+        - summary
+      properties:
+        findings:
+          $ref: "#/components/schemas/FullFindings"
+        blocked:
+          type: boolean
+          description: True if any finding is at a blocking severity or a package is non-existent.
+        summary:
+          type: string
+          description: A human-readable sentence describing the result.
+    FullFindings:
+      type: object
+      properties:
+        sast:
+          type: array
+          items:
+            $ref: "#/components/schemas/SastFinding"
+        sca:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScaFinding"
+        packages:
+          type: array
+          items:
+            $ref: "#/components/schemas/PackageWarning"
+    SastFinding:
       type: object
       properties:
         rule:
@@ -122,20 +218,23 @@ components:
           type: string
         fix:
           type: string
-    ScanResult:
+    ScaFinding:
       type: object
-      required:
-        - findings
-        - blocked
-        - summary
       properties:
-        findings:
-          type: array
-          items:
-            $ref: "#/components/schemas/Finding"
-        blocked:
-          type: boolean
-          description: True if any finding is at a blocking severity.
-        summary:
+        package:
           type: string
-          description: A human-readable sentence describing the result.
+        version:
+          type: string
+        cve:
+          type: string
+        severity:
+          type: string
+        fix_version:
+          type: string
+    PackageWarning:
+      type: object
+      properties:
+        package:
+          type: string
+        warning:
+          type: string

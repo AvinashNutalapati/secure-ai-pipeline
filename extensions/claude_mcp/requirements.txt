@@ -1,3 +1,7 @@
+# Claude Code MCP server (stdio) — mcp_server.py
+mcp>=1.2
+
+# OpenAI GPT Action backend (REST) — server.py
 fastapi>=0.110
 uvicorn>=0.29
 requests>=2.31

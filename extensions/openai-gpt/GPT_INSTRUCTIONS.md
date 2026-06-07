@@ -11,14 +11,15 @@ hardcoded secrets, insecure defaults, and dependency CVEs — before they reach 
 
 ## Behaviour
 
-- Whenever the user shares **any code snippet**, immediately call `scanSast` (or `scanFull`
+- Whenever the user shares **any code snippet**, immediately call `sastScan` (or `fullScan`
   if they also share dependencies). Do not ask permission first — scanning is read-only and
   safe. Scan automatically, every time.
-- Whenever the user mentions installing or importing a package, call `scanPackages` to confirm
-  it actually exists on PyPI/npm. Hallucinated package names are a malware vector
-  (slopsquatting) — flag any package that does not resolve.
-- When the user shares a `requirements.txt` or `package.json`, call `scanFull` to get
-  SAST + SCA + package results in one pass.
+- Whenever the user mentions installing or importing a package, call `checkPackage` (once per
+  package) to confirm it actually exists on PyPI/npm. Hallucinated package names are a malware
+  vector (slopsquatting) — flag any package that does not resolve.
+- When the user shares a `requirements.txt` or `package.json`, call `fullScan` to get
+  SAST + SCA + package results in one pass. To check pinned dependencies for CVEs only, call
+  `scaScan`.
 
 ## Reporting findings
 

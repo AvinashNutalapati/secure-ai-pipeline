@@ -15,20 +15,17 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-import requests
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from . import rules
+from .registry import check_package as _check_package
 
 app = FastAPI(
     title="Secure AI Pipeline MCP Server",
     description="Security scanner for AI-generated code.",
     version="1.0.0",
 )
-
-PYPI_URL = "https://pypi.org/pypi/{pkg}/json"
-NPM_URL = "https://registry.npmjs.org/{pkg}"
 
 
 # ── check_package ────────────────────────────────────────────────────────────
@@ -47,32 +44,7 @@ class CheckPackageResponse(BaseModel):
 @app.post("/check_package", response_model=CheckPackageResponse)
 def check_package(req: CheckPackageRequest) -> CheckPackageResponse:
     """Verify a package exists on PyPI or npm before importing it."""
-    name = req.package.strip()
-    try:
-        if req.registry == "pypi":
-            resp = requests.get(PYPI_URL.format(pkg=name), timeout=10)
-            if resp.status_code == 200:
-                version = resp.json().get("info", {}).get("version")
-                return CheckPackageResponse(exists=True, latest_version=version)
-        else:
-            encoded = name.replace("/", "%2F")
-            resp = requests.get(NPM_URL.format(pkg=encoded), timeout=10)
-            if resp.status_code == 200:
-                version = resp.json().get("dist-tags", {}).get("latest")
-                return CheckPackageResponse(exists=True, latest_version=version)
-    except requests.RequestException as exc:
-        return CheckPackageResponse(
-            exists=False, warning=f"Could not reach {req.registry}: {exc}"
-        )
-
-    return CheckPackageResponse(
-        exists=False,
-        warning=(
-            f"'{name}' was not found on {req.registry}. This is a slopsquatting risk — "
-            "AI models invent plausible package names that attackers pre-register. "
-            "Do not install it without confirming the correct name."
-        ),
-    )
+    return CheckPackageResponse(**_check_package(req.package, req.registry))
 
 
 # ── sast_scan ────────────────────────────────────────────────────────────────
