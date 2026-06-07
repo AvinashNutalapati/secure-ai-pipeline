@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.1.0
+## 2.0.0
+
+Aligns the extension with the project's v2 release (AI-assisted-development security).
 
 ### Added
 - **AI-workflow diagnostics.** Inline findings now appear on the configs that

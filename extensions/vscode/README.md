@@ -16,7 +16,7 @@ runs locally and works in [Cursor](https://cursor.com) (VS Code-compatible).
 | `sql-injection-fstring` | Error | — (use parameterised queries) |
 | `hardcoded-api-key` | Error | → `os.environ[...]` (Python) / `process.env.*` (JS/TS) |
 
-## AI-workflow diagnostics (new in 1.1)
+## AI-workflow diagnostics (new in 2.0)
 
 Open or scan these and findings appear inline + in the Problems panel:
 
