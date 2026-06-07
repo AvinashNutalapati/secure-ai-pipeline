@@ -3,6 +3,32 @@ import { scanDocument, langForDocument, RuleSeverity } from "./diagnostics";
 import { SecurityQuickFixProvider } from "./quickfix";
 import { StatusBar } from "./statusbar";
 import { FindingsProvider } from "./sidebar";
+import {
+  scanConfig,
+  categoryForDocument,
+  toVscodeSeverity,
+  scoreFromWeights,
+  gradeOf,
+  SEVERITY_WEIGHT,
+  ConfigFinding,
+  ConfigSeverity,
+} from "./configScan";
+
+// Glob (brace-expanded) covering every AI-workflow config file we scan.
+const CONFIG_GLOB =
+  "{**/mcp.json,**/.mcp.json,**/claude_desktop_config.json,**/.vscode/mcp.json," +
+  "**/.cursor/mcp.json,**/.claude/settings.json,**/.claude/settings.local.json," +
+  "**/.cursorrules,**/.clinerules,**/.windsurfrules,**/.cursor/rules/**," +
+  "**/.windsurf/rules/**,**/.github/copilot-instructions.md,**/AGENTS.md," +
+  "**/.github/workflows/*.yml,**/.github/workflows/*.yaml}";
+
+function configToDiagnostic(f: ConfigFinding): vscode.Diagnostic {
+  const range = new vscode.Range(f.line, f.startCol, f.line, f.endCol);
+  const diag = new vscode.Diagnostic(range, f.message, toVscodeSeverity(f.severity));
+  diag.source = "secure-ai-pipeline";
+  diag.code = f.ruleId;
+  return diag;
+}
 
 let diagnostics: vscode.DiagnosticCollection;
 let statusBar: StatusBar;
@@ -18,16 +44,58 @@ function config() {
 }
 
 function refreshDocument(doc: vscode.TextDocument): void {
-  if (!langForDocument(doc)) {
+  const { enable, severity } = config();
+  if (langForDocument(doc)) {
+    diagnostics.set(doc.uri, enable ? scanDocument(doc, severity) : []);
+    updateAggregate();
     return;
   }
-  const { enable, severity } = config();
-  if (!enable) {
-    diagnostics.set(doc.uri, []);
-  } else {
-    diagnostics.set(doc.uri, scanDocument(doc, severity));
+  if (categoryForDocument(doc)) {
+    diagnostics.set(doc.uri, enable ? scanConfig(doc).map(configToDiagnostic) : []);
+    updateAggregate();
+  }
+}
+
+/**
+ * Scan every AI-workflow config file in the workspace, set diagnostics, and
+ * return a Blast Radius Score. Mirrors `scripts/blast_radius.py` (config slice).
+ */
+async function runBlastRadius(): Promise<void> {
+  const uris = await vscode.workspace.findFiles(CONFIG_GLOB, "**/node_modules/**");
+  const counts: Record<ConfigSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  let weightSum = 0;
+
+  for (const uri of uris) {
+    let doc: vscode.TextDocument;
+    try {
+      doc = await vscode.workspace.openTextDocument(uri);
+    } catch {
+      continue;
+    }
+    const findings = scanConfig(doc);
+    diagnostics.set(uri, findings.map(configToDiagnostic));
+    for (const f of findings) {
+      counts[f.severity] += 1;
+      weightSum += SEVERITY_WEIGHT[f.severity];
+    }
   }
   updateAggregate();
+
+  const score = scoreFromWeights(weightSum);
+  const grade = gradeOf(score);
+  const summary =
+    `AI Agent Blast Radius: ${score}/100 (grade ${grade}) — ` +
+    `${counts.critical} critical, ${counts.high} high, ${counts.medium} medium ` +
+    `across ${uris.length} config file(s)`;
+
+  if (score >= 90) {
+    void vscode.window.showInformationMessage(summary);
+  } else {
+    const choice = await vscode.window.showWarningMessage(summary, "Show findings");
+    if (choice) {
+      void vscode.commands.executeCommand("workbench.actions.view.problems");
+    }
+  }
 }
 
 function updateAggregate(): void {
@@ -80,6 +148,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("securePipeline.scanWorkspace", () => {
       scanAllOpen();
+    }),
+    vscode.commands.registerCommand("securePipeline.blastRadius", () => {
+      void runBlastRadius();
     })
   );
 

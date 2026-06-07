@@ -12,8 +12,15 @@ export interface SecurityRule {
   /** Substring within the line to underline / replace. Defaults to the trigger match. */
   target?: RegExp;
   languages: Lang[];
-  /** Optional quick fix: given the matched target text, return a replacement. */
-  fix?: (targetText: string) => { title: string; replacement: string };
+  /**
+   * Optional quick fix: given the matched target text and language, return a
+   * replacement. `ensureImport`, if returned, is inserted at the top of the file
+   * when it isn't already present.
+   */
+  fix?: (
+    targetText: string,
+    lang: Lang
+  ) => { title: string; replacement: string; ensureImport?: string };
 }
 
 /**
@@ -43,6 +50,7 @@ export const RULES: SecurityRule[] = [
     fix: () => ({
       title: 'Gate debug on an env var',
       replacement: 'debug=os.getenv("FLASK_DEBUG", "false") == "true"',
+      ensureImport: "import os",
     }),
   },
   {
@@ -86,11 +94,12 @@ export const RULES: SecurityRule[] = [
       /\b(api_key|secret|password|passwd|token|auth_key|access_key)\s*=\s*["'][^"']{4,}["']/i,
     target: /["'][^"']{4,}["']/,
     languages: ["python", "javascript"],
-    fix: (_targetText: string) => ({
+    fix: (_targetText: string, lang: Lang) => ({
       title: "Load from environment variable",
       // The matched text is the string literal value; we cannot see the var name
-      // here, so emit a generic os.environ lookup the developer renames.
-      replacement: 'os.environ["API_KEY"]',
+      // here, so emit a generic env lookup the developer renames — language-aware.
+      replacement: lang === "python" ? 'os.environ["API_KEY"]' : "process.env.API_KEY",
+      ensureImport: lang === "python" ? "import os" : undefined,
     }),
   },
 ];

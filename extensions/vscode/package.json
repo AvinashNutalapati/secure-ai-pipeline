@@ -1,8 +1,8 @@
 {
   "name": "secure-ai-pipeline",
   "displayName": "Secure AI Pipeline",
-  "description": "Inline security diagnostics for AI-generated code — catches insecure defaults as you save.",
-  "version": "1.0.0",
+  "description": "Security for AI-assisted development — inline diagnostics for insecure code plus an AI Agent Blast Radius checkup for MCP, Claude/Cursor configs, and GitHub Actions.",
+  "version": "1.1.0",
   "publisher": "AvinashNutalapati1",
   "license": "MIT",
   "repository": {
@@ -21,6 +21,8 @@
     "ai",
     "sast",
     "cursor",
+    "mcp",
+    "claude",
     "slopsquatting"
   ],
   "activationEvents": [
@@ -28,7 +30,16 @@
     "onLanguage:javascript",
     "onLanguage:typescript",
     "onLanguage:javascriptreact",
-    "onLanguage:typescriptreact"
+    "onLanguage:typescriptreact",
+    "onLanguage:json",
+    "onLanguage:jsonc",
+    "onLanguage:yaml",
+    "onLanguage:markdown",
+    "onLanguage:plaintext",
+    "workspaceContains:**/mcp.json",
+    "workspaceContains:**/.claude/settings.json",
+    "workspaceContains:**/.cursorrules",
+    "workspaceContains:**/.github/workflows/*.yml"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -57,6 +68,10 @@
       {
         "command": "securePipeline.scanWorkspace",
         "title": "Secure AI Pipeline: Rescan Open Files"
+      },
+      {
+        "command": "securePipeline.blastRadius",
+        "title": "Secure AI Pipeline: AI Blast Radius Scan"
       }
     ],
     "configuration": {

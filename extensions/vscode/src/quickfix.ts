@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { RULES, SecurityRule } from "./diagnostics";
+import { RULES, SecurityRule, langForDocument } from "./diagnostics";
 
 /**
  * Provides Quick Fixes for diagnostics emitted by this extension. Each fix
@@ -36,14 +36,33 @@ export class SecurityQuickFixProvider implements vscode.CodeActionProvider {
     diag: vscode.Diagnostic,
     rule: SecurityRule
   ): vscode.CodeAction | undefined {
+    const lang = langForDocument(document);
+    if (!lang) {
+      return undefined;
+    }
     const targetText = document.getText(diag.range);
-    const fix = rule.fix!(targetText);
+    const fix = rule.fix!(targetText, lang);
 
     const action = new vscode.CodeAction(fix.title, vscode.CodeActionKind.QuickFix);
     action.diagnostics = [diag];
     action.isPreferred = true;
     action.edit = new vscode.WorkspaceEdit();
     action.edit.replace(document.uri, diag.range, fix.replacement);
+
+    // Insert a required import at the top of the file if it isn't already there.
+    if (fix.ensureImport && !this.hasImport(document, fix.ensureImport)) {
+      action.edit.insert(document.uri, new vscode.Position(0, 0), `${fix.ensureImport}\n`);
+    }
     return action;
+  }
+
+  private hasImport(document: vscode.TextDocument, importLine: string): boolean {
+    const needle = importLine.trim();
+    for (let i = 0; i < document.lineCount; i++) {
+      if (document.lineAt(i).text.trim() === needle) {
+        return true;
+      }
+    }
+    return false;
   }
 }
