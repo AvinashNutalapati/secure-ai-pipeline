@@ -57,6 +57,8 @@ MCP servers, and CI. That seam is what this project owns.
 | **Claude permissions** | `claude` | home/root reads (`Read(//Users/**)`), wildcard `Bash(*)`, `rm -rf`, `bypassPermissions` |
 | **MCP configs** | `mcp` | secrets handed to servers, `bash`/`curl\|bash` startup, `/` filesystem mounts, unauthenticated remotes |
 | **GitHub Actions** | `github_actions` | unpinned actions (tj-actions lesson), `pull_request_target`, `github.event` script injection |
+| **Prompt privacy** | `prompt_privacy` | secrets, internal URLs/IPs, and emails embedded in AI rules & prompt files (they go to the model) |
+| **Config secrets** | `secrets` | hardcoded tokens/keys in `.env` and MCP/Claude config (complements Gitleaks) |
 | **Dependency trust** | `packages` | hallucinated / slopsquatted imports that don't exist on PyPI/npm |
 
 Docs: [threat model](docs/threat-model.md) · [AI tool risk](docs/ai-tool-risk.md) ·

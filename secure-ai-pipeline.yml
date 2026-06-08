@@ -1,0 +1,12 @@
+# Policy for THIS repo's own AI Blast Radius scan / CI gate.
+# The examples/ tree is deliberately vulnerable (demo fixtures), and demo/ holds
+# the intentionally-insecure Flask app — both are excluded so `scan .` and the
+# ai-posture CI job reflect the project's real posture.
+fail_on:
+  - critical
+  - high
+
+exclude:
+  - examples/**
+  - demo/**
+  - .claude/settings.local.json   # developer-local machine config, gitignored

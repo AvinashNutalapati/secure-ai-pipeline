@@ -36,6 +36,8 @@ const FILES_TO_COPY = [
   path.join("scripts", "scanners", "claude_settings.py"),
   path.join("scripts", "scanners", "mcp.py"),
   path.join("scripts", "scanners", "github_actions.py"),
+  path.join("scripts", "scanners", "prompt_privacy.py"),
+  path.join("scripts", "scanners", "secrets_in_config.py"),
   path.join(".semgrep", "ai-insecure-defaults.yml"),
   path.join(".zap", "rules.tsv"),
   ".pre-commit-config.yaml",

@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scanners import SEVERITIES, SEVERITY_WEIGHT  # noqa: E402
 from scanners import ai_ide, claude_settings, github_actions, mcp  # noqa: E402
+from scanners import prompt_privacy, secrets_in_config  # noqa: E402
 from scanners.base import Finding  # noqa: E402
 import policy as policy_mod  # noqa: E402
 
@@ -36,6 +37,8 @@ OFFLINE_SCANNERS = {
     "claude": claude_settings.scan,
     "mcp": mcp.scan,
     "github_actions": github_actions.scan,
+    "prompt_privacy": prompt_privacy.scan,
+    "secrets": secrets_in_config.scan,
 }
 
 _SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}  # CRITICAL=0 .. INFO=4
