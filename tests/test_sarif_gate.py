@@ -41,6 +41,15 @@ def test_suppressed_error_is_ignored(tmp_path, monkeypatch):
     assert _run(path, fail_on_warnings=False, monkeypatch=monkeypatch) == 0
 
 
+def test_rejected_suppression_still_gates(tmp_path, monkeypatch):
+    # A `rejected` suppression was NOT applied, so the finding must still block.
+    path = _sarif(tmp_path, "rej.sarif", [
+        {"ruleId": "x", "level": "error",
+         "suppressions": [{"kind": "external", "status": "rejected"}]},
+    ])
+    assert _run(path, fail_on_warnings=False, monkeypatch=monkeypatch) == 1
+
+
 def test_error_blocks_when_flag_on(tmp_path, monkeypatch):
     path = _sarif(tmp_path, "e.sarif", [{"ruleId": "tls-verify-false", "level": "error"}])
     assert _run(path, fail_on_warnings=True, monkeypatch=monkeypatch) == 1

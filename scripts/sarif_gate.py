@@ -34,6 +34,17 @@ def _level_for(result, rules_by_id):
     return rule.get("defaultConfiguration", {}).get("level", "warning")
 
 
+def _is_suppressed(result) -> bool:
+    """True if a SARIF result is effectively suppressed (e.g. an inline
+    `nosemgrep`). A suppression applies unless its status is `rejected`; an
+    absent status means `accepted` per the SARIF spec. A result whose only
+    suppressions are `rejected` still gates the build (fail-closed)."""
+    suppressions = result.get("suppressions")
+    if not suppressions:
+        return False
+    return any((s or {}).get("status", "accepted") != "rejected" for s in suppressions)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sarif", help="Path to the SARIF file to gate on.")
@@ -62,8 +73,9 @@ def main(argv=None):
         }
         for result in run.get("results", []):
             # Honor SARIF suppressions (e.g. a `nosemgrep` inline comment) — a
-            # suppressed result must not gate the build.
-            if result.get("suppressions"):
+            # suppressed result must not gate the build. A `rejected` suppression
+            # does NOT suppress, so it still gates (fail-closed).
+            if _is_suppressed(result):
                 continue
             level = _level_for(result, rules_by_id)
             rule_id = result.get("ruleId", "<unknown>")
