@@ -28,12 +28,13 @@ jobs:
         run: python -m pytest tests/ -v
 
   actionlint:
-    name: "✅ Lint action.yml"
+    name: "✅ Lint workflows"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      # actionlint validates workflow files (.github/workflows/*). It cannot lint
+      # action.yml (a composite-action schema), which is why the old
+      # `files: action.yml` target failed on every run.
       - name: Run actionlint
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2
-        with:
-          files: "action.yml"
