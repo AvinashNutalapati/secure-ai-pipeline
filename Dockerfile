@@ -22,5 +22,9 @@ COPY extensions/claude_mcp/ extensions/claude_mcp/
 ENV PORT=8765
 EXPOSE 8765
 
+# Drop privileges — run as a non-root user.
+RUN useradd --create-home --uid 10001 appuser
+USER appuser
+
 # Shell form so $PORT expands at runtime.
 CMD ["sh", "-c", "uvicorn extensions.claude_mcp.server:app --host 0.0.0.0 --port ${PORT:-8765}"]

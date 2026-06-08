@@ -14,7 +14,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { spawnSync } = require("child_process");
 
 // Package root = parent of this cli/ directory. All bundled files live here.
 const PKG_ROOT = path.join(__dirname, "..");
@@ -99,20 +99,20 @@ function ensureGitignoreEntry() {
 }
 
 function commandExists(cmd) {
-  try {
-    execSync(cmd, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+  // Split into argv and run without a shell (no shell-injection surface). `cmd`
+  // is always a fixed internal string (e.g. "pre-commit --version"), never user
+  // input, so the variable binary is safe.
+  const [bin, ...args] = cmd.split(" ");
+  const r = spawnSync(bin, args, { stdio: "ignore" }); // nosemgrep
+  return !r.error && r.status === 0;
 }
 
 function setupPreCommit() {
   if (commandExists("pre-commit --version")) {
-    try {
-      execSync("pre-commit install", { cwd: TARGET, stdio: "ignore" });
+    const r = spawnSync("pre-commit", ["install"], { cwd: TARGET, stdio: "ignore" });
+    if (!r.error && r.status === 0) {
       console.log(`  ${green("ok")}     pre-commit hooks installed`);
-    } catch {
+    } else {
       console.log(
         `  ${yellow("note")}   pre-commit is installed but 'pre-commit install' failed ` +
           `(are you in a git repo?). Run it manually: ${bold("pre-commit install")}`

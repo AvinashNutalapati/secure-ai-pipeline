@@ -61,6 +61,10 @@ def main(argv=None):
             for r in run.get("tool", {}).get("driver", {}).get("rules", [])
         }
         for result in run.get("results", []):
+            # Honor SARIF suppressions (e.g. a `nosemgrep` inline comment) — a
+            # suppressed result must not gate the build.
+            if result.get("suppressions"):
+                continue
             level = _level_for(result, rules_by_id)
             rule_id = result.get("ruleId", "<unknown>")
             if level == "error":

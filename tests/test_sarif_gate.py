@@ -31,6 +31,16 @@ def test_error_blocks_even_when_flag_off(tmp_path, monkeypatch):
     assert _run(path, fail_on_warnings=False, monkeypatch=monkeypatch) == 1
 
 
+def test_suppressed_error_is_ignored(tmp_path, monkeypatch):
+    # A nosemgrep-suppressed finding carries a SARIF `suppressions` entry and
+    # must not gate the build.
+    path = _sarif(tmp_path, "sup.sarif", [
+        {"ruleId": "detect-child-process", "level": "error",
+         "suppressions": [{"kind": "inSource"}]},
+    ])
+    assert _run(path, fail_on_warnings=False, monkeypatch=monkeypatch) == 0
+
+
 def test_error_blocks_when_flag_on(tmp_path, monkeypatch):
     path = _sarif(tmp_path, "e.sarif", [{"ruleId": "tls-verify-false", "level": "error"}])
     assert _run(path, fail_on_warnings=True, monkeypatch=monkeypatch) == 1

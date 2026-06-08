@@ -32,7 +32,7 @@ rules:
   # ── Wildcard CORS ──────────────────────────────────────────────────────────
   - id: wildcard-cors
     patterns:
-      - pattern: CORS($APP, resources={r"/*": {"origins": "*"}})
+      - pattern: 'CORS($APP, resources={r"/*": {"origins": "*"}})'
       - pattern: CORS($APP, origins="*")
       - pattern: response.headers["Access-Control-Allow-Origin"] = "*"
     message: >
@@ -48,12 +48,10 @@ rules:
   # ── Hardcoded credentials / API keys ──────────────────────────────────────
   - id: hardcoded-api-key
     patterns:
-      - pattern: $KEY = "..."
-        metavariable-regex:
-          metavariable: $KEY
-          regex: (?i)(api_key|secret|password|token|passwd|auth_key|access_key)
-      - pattern: $KEY = '...'
-        metavariable-regex:
+      - pattern-either:
+          - pattern: $KEY = "..."
+          - pattern: $KEY = '...'
+      - metavariable-regex:
           metavariable: $KEY
           regex: (?i)(api_key|secret|password|token|passwd|auth_key|access_key)
     message: >
