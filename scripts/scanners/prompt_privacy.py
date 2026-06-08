@@ -24,7 +24,8 @@ PROMPT_GLOBS = [
 SECRET_PATTERNS = [
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{16,}\b"), "GitHub token"),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}\b"), "GitHub fine-grained PAT"),
-    (re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}\b"), "OpenAI/Anthropic API key"),
+    (re.compile(r"\bsk-[A-Za-z0-9]{32,}\b"), "OpenAI API key"),
+    (re.compile(r"\bsk-(?:proj|ant-api\d+)-[A-Za-z0-9_-]{32,}\b"), "OpenAI/Anthropic API key"),
     (re.compile(r"\bAKIA[0-9A-Z]{12,}\b"), "AWS access key id"),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "Slack token"),
     (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), "private key"),
@@ -78,6 +79,7 @@ def scan(root: Path) -> list[Finding]:
                         where, i,
                     ))
                     break
+            # Independent checks: one line can leak more than one of these.
             if INTERNAL_URL.search(line):
                 findings.append(Finding(
                     "prompt_privacy", "Prompt privacy", "prompt-internal-url", "MEDIUM",
@@ -87,7 +89,7 @@ def scan(root: Path) -> list[Finding]:
                     "Avoid internal hostnames in rules; keep them out of model context.",
                     where, i,
                 ))
-            elif PRIVATE_IP.search(line):
+            if PRIVATE_IP.search(line):
                 findings.append(Finding(
                     "prompt_privacy", "Prompt privacy", "prompt-private-ip", "MEDIUM",
                     "Private IP address in an AI rules/prompt file",
@@ -96,15 +98,14 @@ def scan(root: Path) -> list[Finding]:
                     "Remove internal IPs from rules/prompt files.",
                     where, i,
                 ))
-            else:
-                m = EMAIL.search(line)
-                if m and not any(s in m.group(0).lower() for s in EMAIL_SAFE):
-                    findings.append(Finding(
-                        "prompt_privacy", "Prompt privacy", "prompt-email", "LOW",
-                        "Email address in an AI rules/prompt file",
-                        f"{where}:{i} contains an email ({m.group(0)}) that becomes part "
-                        "of model context.",
-                        "Drop personal/customer emails from rules files.",
-                        where, i,
-                    ))
+            m = EMAIL.search(line)
+            if m and not any(s in m.group(0).lower() for s in EMAIL_SAFE):
+                findings.append(Finding(
+                    "prompt_privacy", "Prompt privacy", "prompt-email", "LOW",
+                    "Email address in an AI rules/prompt file",
+                    f"{where}:{i} contains an email ({m.group(0)}) that becomes part "
+                    "of model context.",
+                    "Drop personal/customer emails from rules files.",
+                    where, i,
+                ))
     return findings

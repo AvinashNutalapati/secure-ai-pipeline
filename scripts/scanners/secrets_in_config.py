@@ -24,7 +24,8 @@ CONFIG_GLOBS = ("**/.vscode/mcp.json", "**/.cursor/mcp.json", "**/.claude/*.json
 VALUE_PATTERNS = [
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{16,}\b"), "GitHub token"),
     (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}\b"), "GitHub fine-grained PAT"),
-    (re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}\b"), "OpenAI/Anthropic API key"),
+    (re.compile(r"\bsk-[A-Za-z0-9]{32,}\b"), "OpenAI API key"),
+    (re.compile(r"\bsk-(?:proj|ant-api\d+)-[A-Za-z0-9_-]{32,}\b"), "OpenAI/Anthropic API key"),
     (re.compile(r"\bAKIA[0-9A-Z]{12,}\b"), "AWS access key id"),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "Slack token"),
     (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), "private key"),
@@ -34,16 +35,21 @@ SECRET_KEY = re.compile(
     r"(?i)\b([A-Z0-9_]*(SECRET|TOKEN|API[_-]?KEY|ACCESS[_-]?KEY|PASSWORD|PRIVATE[_-]?KEY))\b"
 )
 ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$")
-PLACEHOLDER = ("${", "$(", "$", "<", "changeme", "your_", "your-", "example",
-               "placeholder", "redacted", "xxxx", "...", "dummy", "fake", "todo")
+# An env reference ($VAR / ${VAR}) — not a literal secret.
+ENV_REF = re.compile(r"^\$")
+# Whole-value placeholder shapes. Anchored at the start so a real secret that
+# merely *contains* a substring like "todo" or a "$" mid-value is NOT skipped.
+PLACEHOLDER_RE = re.compile(
+    r"^(?:changeme|placeholder|dummy|redacted|none|null|your[_-]|x{4,}|\.{3,}|<)",
+    re.IGNORECASE,
+)
 
 
 def _is_placeholder(value: str) -> bool:
     v = value.strip().strip("'\"")
     if not v or len(v) < 8:
         return True
-    low = v.lower()
-    return any(tok in low for tok in PLACEHOLDER)
+    return bool(ENV_REF.match(v) or PLACEHOLDER_RE.match(v))
 
 
 def _env_files(root: Path) -> list[Path]:

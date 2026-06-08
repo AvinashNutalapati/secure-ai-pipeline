@@ -73,3 +73,32 @@ def test_config_env_reference_not_flagged(tmp_path):
         "gh": {"command": "x", "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}},
     }}))
     assert secrets_in_config.scan(tmp_path) == []
+
+
+# ── regression: review fixes ─────────────────────────────────────────────────
+
+def test_secret_value_containing_dollar_is_flagged(tmp_path):
+    # A '$' mid-value must NOT be treated as an env-reference placeholder.
+    _w(tmp_path, ".env", "DB_PASSWORD=Pa$$w0rd-prod-2026xyz\n")
+    assert "env-hardcoded-secret" in _ids(secrets_in_config.scan(tmp_path))
+
+
+def test_sk_slug_not_flagged(tmp_path):
+    _w(tmp_path, ".env", "THEME=sk-dark-mode-variant-001\n")    # benign slug
+    assert secrets_in_config.scan(tmp_path) == []
+
+
+def test_real_sk_key_is_flagged(tmp_path):
+    _w(tmp_path, ".env",
+       "THEME=sk-dark-mode-variant-001\n"
+       "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD\n")  # 40-char key
+    crit = [f for f in secrets_in_config.scan(tmp_path)
+            if f.rule_id == "config-hardcoded-secret"]
+    assert len(crit) == 1 and crit[0].line == 2                 # only the real key
+
+
+def test_prompt_privacy_reports_colocated_leaks_on_one_line(tmp_path):
+    _w(tmp_path, ".cursorrules",
+       "Deploy to https://api.acme.internal from 10.2.3.4; page ops@acme.corp\n")
+    ids = _ids(prompt_privacy.scan(tmp_path))
+    assert {"prompt-internal-url", "prompt-private-ip", "prompt-email"} <= ids
