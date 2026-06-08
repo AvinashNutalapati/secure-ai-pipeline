@@ -34,10 +34,13 @@ scripts/run_pipeline.py            Local runner — all gates in pure Python, no
 .semgrep/ai-insecure-defaults.yml  7 custom Semgrep rules for AI coding patterns
 .zap/rules.tsv                     ZAP baseline noise suppression
 .pre-commit-config.yaml            Local hooks — Gitleaks + package check
-demo/app.py                        Deliberately vulnerable Flask app (8 labeled flaws)
-demo/requirements.txt              Vulnerable pinned deps (Flask 1.0, etc.)
-demo/DEMO.md                       Flaw-to-gate mapping, fix instructions
+scripts/blast_radius.py            AI Agent Blast Radius score + scanners/
+scripts/scanners/                  AI IDE / Claude / MCP / Actions / prompt / secrets
 ```
+
+Deliberately-vulnerable demo fixtures live in a SEPARATE repo
+(`secure-ai-pipeline-demo`) so this repo stays a clean product that passes its own
+security pipeline. Do not add intentionally-vulnerable code here.
 
 ## Gate architecture
 
@@ -104,7 +107,7 @@ Priority order:
 ## Definition of done
 
 - `npx secure-ai-pipeline@latest init` works end-to-end in a clean repo
-- VS Code extension shows inline diagnostics on the demo/app.py file
+- VS Code extension shows inline diagnostics on an insecure Python file
 - MCP server responds to `check_packages`, `sast_scan`, `sca_scan` tool calls
 - OpenAI GPT Action spec validates against the OpenAPI 3.1 linter
 - All Python scripts pass `python -m pytest tests/` with no failures

@@ -54,8 +54,8 @@ npm install
 npm run compile        # tsc -p ./  → out/
 ```
 
-Press `F5` in VS Code to launch an Extension Development Host, then open `demo/app.py`
-to watch the rules fire.
+Press `F5` in VS Code to launch an Extension Development Host, then open an insecure
+Python file (or an `mcp.json` / `.cursorrules`) to watch the rules fire.
 
 ## Publish
 

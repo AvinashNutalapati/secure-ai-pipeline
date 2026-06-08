@@ -167,7 +167,7 @@ def main(argv=None) -> int:
     parser.add_argument("--no-policy", action="store_true",
                         help="Ignore any secure-ai-pipeline.{yml,yaml,json}.")
     parser.add_argument("--exclude", metavar="GLOBS", default="",
-                        help="Comma-separated path globs to drop (e.g. 'examples/**,demo/**').")
+                        help="Comma-separated path globs to drop (e.g. 'vendor/**,fixtures/**').")
     parser.add_argument("--no-color", action="store_true")
     args = parser.parse_args(argv)
 

@@ -32,6 +32,30 @@ def test_scan_maps_import_name_to_distribution(tmp_path, monkeypatch):
     assert "PIL" not in seen and "yaml" not in seen
 
 
+def test_nested_first_party_module_not_checked(tmp_path, monkeypatch):
+    # A foo.py anywhere in the tree means `import foo` resolves locally.
+    _w(tmp_path, "scripts/blast_radius.py", "x = 1\n")
+    _w(tmp_path, "tests/test_x.py", "import blast_radius\nimport requests\n")
+    seen = []
+    monkeypatch.setattr(cp, "pypi_status", lambda pkg, **k: seen.append(pkg) or "exists")
+    cp.scan(tmp_path)
+    assert "blast_radius" not in seen          # first-party, nested
+    assert "requests" in seen
+
+
+def test_js_node_builtins_and_host_modules_ignored(tmp_path, monkeypatch):
+    _w(tmp_path, "ext.ts",
+       "import * as fs from 'fs'\n"
+       "import * as path from 'path'\n"
+       "import { spawn } from 'node:child_process'\n"
+       "import * as vscode from 'vscode'\n"
+       "import express from 'express'\n")
+    seen = []
+    monkeypatch.setattr(cp, "npm_status", lambda pkg, **k: seen.append(pkg) or "exists")
+    cp.scan(tmp_path)
+    assert seen == ["express"]                 # builtins + vscode skipped
+
+
 def test_scan_finds_js_ts_imports(tmp_path, monkeypatch):
     # The old brace-glob bug meant JS/TS scanning matched nothing.
     _w(tmp_path, "x.ts", "import express from 'express'\nimport './local'\n")

@@ -45,6 +45,7 @@ PYTHON_STDLIB = {
     "enum", "copy", "uuid", "hmac", "hash", "stat", "glob", "shutil",
     "queue", "array", "heapq", "struct", "socket", "select", "signal",
     "string", "struct", "random", "logging", "hashlib", "pathlib", "urllib",
+    "fnmatch", "linecache", "filecmp", "fileinput", "difflib", "bisect",
     "typing", "decimal", "inspect", "functools", "itertools", "datetime",
     "calendar", "textwrap", "threading", "multiprocessing", "subprocess",
     "contextlib", "collections", "dataclasses", "configparser", "http",
@@ -84,6 +85,19 @@ IMPORT_TO_PYPI = {
     "yaml_": "PyYAML",
     "mcp": "mcp",
 }
+
+# Node.js core modules — never on npm (the JS analog of PYTHON_STDLIB).
+NODE_BUILTINS = {
+    "assert", "async_hooks", "buffer", "child_process", "cluster", "console",
+    "constants", "crypto", "dgram", "diagnostics_channel", "dns", "domain",
+    "events", "fs", "fs/promises", "http", "http2", "https", "inspector",
+    "module", "net", "os", "path", "perf_hooks", "process", "punycode",
+    "querystring", "readline", "repl", "stream", "stream/promises",
+    "string_decoder", "timers", "timers/promises", "tls", "trace_events", "tty",
+    "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib",
+}
+# Editor/host-provided modules that are not installable from npm.
+HOST_MODULES = {"vscode"}
 
 JS_GLOBS = ("*.js", "*.ts", "*.jsx", "*.tsx", "*.mjs", "*.cjs")
 SKIP_DIRS = {
@@ -148,13 +162,16 @@ def _npm_base(spec: str) -> str:
 
 def discover_first_party(root: Path) -> set[str]:
     """Names that resolve to local code and must not be checked on a registry:
-    any directory containing __init__.py, plus top-level .py file stems."""
+    any directory containing __init__.py, plus the stem of every .py file in the
+    repo (a `foo.py` anywhere means `import foo` resolves locally, not from PyPI)."""
     names: set[str] = set()
     for init in root.rglob("__init__.py"):
         if _skip(init):
             continue
         names.add(init.parent.name)
-    for py in root.glob("*.py"):
+    for py in root.rglob("*.py"):
+        if _skip(py):
+            continue
         names.add(py.stem)
     # JS first-party: the package.json "name", if present.
     pkg_json = root / "package.json"
@@ -253,7 +270,8 @@ def scan(root: Path) -> dict:
             if _skip(js):
                 continue
             for name in extract_js_imports(js):
-                if name in first_party:
+                base = name[5:] if name.startswith("node:") else name
+                if base in first_party or base in NODE_BUILTINS or base in HOST_MODULES:
                     continue
                 record(name, name, npm_status(name), "npm", js)
 

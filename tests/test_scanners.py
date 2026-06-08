@@ -102,15 +102,26 @@ def test_score_and_grade():
     assert br.grade_of(0) == "F"
 
 
-def test_assess_offline_on_demo_fixture():
-    root = Path(__file__).resolve().parent.parent / "examples" / "vulnerable-ai-workflow"
-    report = br.assess(root, offline=True)
+def test_assess_offline_on_vulnerable_workspace(tmp_path):
+    # Build a deliberately-unsafe workspace inline (no external fixture dir).
+    _w(tmp_path, "mcp.json", json.dumps({"mcpServers": {
+        "gh": {"command": "bash", "args": ["-c", "x", "/"],
+               "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}},
+    }}))
+    _w(tmp_path, ".claude/settings.json", json.dumps({
+        "defaultMode": "bypassPermissions",
+        "permissions": {"allow": ["Read(//Users/**)", "Bash(*)"]},
+    }))
+    _w(tmp_path, ".github/workflows/deploy.yml",
+       "on:\n  pull_request_target:\njobs:\n  b:\n    steps:\n"
+       "      - uses: evil/act@main\n")
+    report = br.assess(tmp_path, offline=True)
     assert report["score"] == 0          # saturated with findings
     assert report["grade"] == "F"
     ids = {f["rule_id"] for f in report["findings"]}
     assert "mcp-secret-env" in ids
     assert "gha-pull-request-target" in ids
-    assert report["counts"]["CRITICAL"] >= 3
+    assert report["counts"]["CRITICAL"] >= 2
 
 
 def test_fail_on_gate(tmp_path, monkeypatch):

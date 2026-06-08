@@ -7,7 +7,7 @@ Implements the same detection logic as the real CI tools (Gitleaks, check_packag
 Semgrep custom rules, Trivy SCA) — no network or external binaries required.
 
 Usage:
-    python scripts/run_pipeline.py demo/app.py demo/requirements.txt
+    python scripts/run_pipeline.py path/to/app.py path/to/requirements.txt
 """
 
 import ast
@@ -210,8 +210,11 @@ KNOWN_CVES = {
 }
 
 def parse_requirements(req: Path) -> list[tuple[str,str]]:
-    """Returns list of (pkg_name_normalised, version) from requirements.txt."""
+    """Returns list of (pkg_name_normalised, version) from requirements.txt.
+    Returns [] if the requirements file is missing/unspecified."""
     result = []
+    if not req or not req.is_file():
+        return result
     for line in req.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -382,8 +385,11 @@ def run_all(py_file: str, req_file: str) -> list[Finding]:
 
 
 if __name__ == "__main__":
-    py_file  = sys.argv[1] if len(sys.argv) > 1 else "demo/app.py"
-    req_file = sys.argv[2] if len(sys.argv) > 2 else "demo/requirements.txt"
+    if len(sys.argv) < 2:
+        print("usage: run_pipeline.py <code_file> [requirements_file]", file=sys.stderr)
+        sys.exit(2)
+    py_file = sys.argv[1]
+    req_file = sys.argv[2] if len(sys.argv) > 2 else ""
     findings = run_all(py_file, req_file)
     has_blocks = any(f.action == "BLOCK" for f in findings)
     sys.exit(1 if has_blocks else 0)

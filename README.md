@@ -32,12 +32,13 @@ with concrete fixes. Add `--html report.html` for a shareable report.
   …
 ```
 
-Try it on the bad-on-purpose demo repo (scores 0/100):
+Want to see it light up? Run it against the companion
+[**secure-ai-pipeline-demo**](https://github.com/AvinashNutalapati/secure-ai-pipeline-demo)
+repo — an intentionally-insecure AI workflow that scores 0/100:
 
 ```bash
-git clone https://github.com/AvinashNutalapati/secure-ai-pipeline
-cd secure-ai-pipeline
-npx secure-ai-pipeline scan examples/vulnerable-ai-workflow --html report.html
+git clone https://github.com/AvinashNutalapati/secure-ai-pipeline-demo
+npx secure-ai-pipeline scan secure-ai-pipeline-demo --html report.html
 ```
 
 ## Why this exists
@@ -129,7 +130,8 @@ The action runs the AI Blast Radius checkup plus package, secret, SAST, and SCA 
 | F7 | `subprocess(..., shell=True)` | Semgrep `subprocess-shell-true` | Block |
 | F8 | Known-CVE dependency (e.g. Flask 1.0) | Trivy SCA | Block |
 
-See [`demo/DEMO.md`](demo/DEMO.md) for the deliberately-vulnerable app that trips every gate.
+The [secure-ai-pipeline-demo](https://github.com/AvinashNutalapati/secure-ai-pipeline-demo)
+repo has a deliberately-vulnerable app that trips every gate.
 
 ## IDE & AI integrations
 
