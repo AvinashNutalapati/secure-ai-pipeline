@@ -38,7 +38,7 @@ const FILES_TO_COPY = [
   path.join("scripts", "check_packages.py"),
   path.join("scripts", "run_pipeline.py"),
   path.join("scripts", "sarif_gate.py"),
-  path.join("scripts", "sarif_summary.py"),
+  path.join("scripts", "job_summary.py"),
   // Unified multi-scanner local scan (secrets/SCA/SAST/posture/DAST)
   path.join("scripts", "scan_all.py"),
   path.join("scripts", "external_tools.py"),

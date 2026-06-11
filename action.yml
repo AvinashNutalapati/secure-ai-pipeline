@@ -61,6 +61,9 @@ runs:
         #   - uses: AvinashNutalapati/secure-ai-pipeline@v2
         #     env:  { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+        # We render the secrets result in our own unified job summary (from
+        # results.sarif), so suppress gitleaks-action's separate heading.
+        GITLEAKS_ENABLE_SUMMARY: "false"
 
     - name: Stage 1 — SAST (Semgrep)
       shell: bash
@@ -118,15 +121,18 @@ runs:
       with:
         sarif_file: trivy.sarif
 
-    - name: Stage 1 — Findings summary (SAST + SCA)
+    - name: Job summary — findings + copy-paste fix prompts
       if: always()
       shell: bash
-      # Report-only: surfaces Semgrep + Trivy findings in the log and the run's
-      # Step Summary, so they're visible even when SARIF wasn't uploaded to the
-      # Security tab. Never fails the build.
+      # Report-only: one uniform table per scan type (Secrets, SCA, SAST) in the
+      # run's Step Summary, with a suggested fix per finding (incl. Trivy's
+      # fixed-version), a copy-paste AI fix prompt per type, and one combined
+      # prompt at the end. Reads each scanner's SARIF; never fails the build.
       run: |
-        python "${{ github.action_path }}/scripts/sarif_summary.py" semgrep.sarif --label "SAST (Semgrep)"
-        python "${{ github.action_path }}/scripts/sarif_summary.py" trivy.sarif --label "SCA (Trivy)"
+        python "${{ github.action_path }}/scripts/job_summary.py" \
+          --scan secrets "Secrets (Gitleaks)" results.sarif \
+          --scan sca "Dependencies (Trivy SCA)" trivy.sarif \
+          --scan sast "SAST (Semgrep)" semgrep.sarif
 
     - name: Stage 2 — Stage ZAP rules into the workspace
       if: ${{ inputs.staging-url != '' }}
