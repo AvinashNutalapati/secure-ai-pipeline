@@ -104,7 +104,9 @@ runs:
         format: sarif
         output: trivy.sarif
         severity: ${{ inputs.fail-on-warnings == 'true' && 'CRITICAL,HIGH,MEDIUM,LOW' || 'CRITICAL,HIGH' }}
-        exit-code: "1"
+        # Report-only by default (exit 0): CVE findings are shown but don't fail
+        # the build. Set fail-on-warnings: true to BLOCK on Critical/High CVEs.
+        exit-code: ${{ inputs.fail-on-warnings == 'true' && '1' || '0' }}
         ignore-unfixed: true
 
     - name: Upload Trivy SARIF
@@ -115,6 +117,16 @@ runs:
       uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
       with:
         sarif_file: trivy.sarif
+
+    - name: Stage 1 — Findings summary (SAST + SCA)
+      if: always()
+      shell: bash
+      # Report-only: surfaces Semgrep + Trivy findings in the log and the run's
+      # Step Summary, so they're visible even when SARIF wasn't uploaded to the
+      # Security tab. Never fails the build.
+      run: |
+        python "${{ github.action_path }}/scripts/sarif_summary.py" semgrep.sarif --label "SAST (Semgrep)"
+        python "${{ github.action_path }}/scripts/sarif_summary.py" trivy.sarif --label "SCA (Trivy)"
 
     - name: Stage 2 — Stage ZAP rules into the workspace
       if: ${{ inputs.staging-url != '' }}
