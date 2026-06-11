@@ -6,3 +6,10 @@ fail_on:
 
 exclude:
   - .claude/settings.local.json   # developer-local machine config, gitignored
+  # This repo is a security tool: its tests/docs/examples deliberately contain
+  # secret-shaped strings and insecure-code patterns as fixtures. Exclude them
+  # so the tool passes its own unified scan (real product code lives in scripts/).
+  - tests/**
+  - examples/**
+  - docs/**
+  - deep-research-report.md

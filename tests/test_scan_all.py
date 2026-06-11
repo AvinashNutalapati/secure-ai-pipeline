@@ -1,0 +1,119 @@
+"""Tests for scripts/scan_all.py — the unified orchestrator + tabular UX."""
+
+import scan_all as sa
+
+
+def _w(tmp_path, rel, body):
+    p = tmp_path / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+# ── built-in fallbacks ───────────────────────────────────────────────────────
+
+def test_builtin_secrets_flags_provider_token_not_base64(tmp_path):
+    _w(tmp_path, "a.js",
+       "const t = 'ghp_0123456789abcdefghij0123456789abcd'\n"
+       "const data = 'aGVsbG8gd29ybGQgdGhpcyBpcyBhIGxvbmcgYmFzZTY0IGJsb2I1234='\n")
+    findings = sa.builtin_secrets(tmp_path)
+    titles = [f.title for f in findings]
+    assert any("GitHub token" in t for t in titles)
+    # The base64 blob must NOT be flagged — the generic high-entropy rule is
+    # intentionally NOT used in the built-in fallback (false-positive flood).
+    assert all("high-entropy" not in t.lower() for t in titles)
+
+
+def test_builtin_secrets_skips_comment_lines(tmp_path):
+    _w(tmp_path, "a.py", "# token = 'ghp_0123456789abcdefghij0123456789abcd'\n")
+    assert sa.builtin_secrets(tmp_path) == []
+
+
+def test_inline_suppression_silences_secret(tmp_path):
+    _w(tmp_path, "a.py",
+       "token = 'ghp_0123456789abcdefghij0123456789abcd'  # nosemgrep: known test fixture\n")
+    assert sa.builtin_secrets(tmp_path) == []
+
+
+def test_inline_suppression_silences_sast(tmp_path):
+    _w(tmp_path, "app.py", "app.run(debug=True)  # nosec\n")
+    assert sa.builtin_sast(tmp_path) == []
+
+
+def test_builtin_sast_flags_insecure_python(tmp_path):
+    _w(tmp_path, "app.py", "app.run(host='0.0.0.0', debug=True)\n")
+    titles = " ".join(f.title for f in sa.builtin_sast(tmp_path))
+    assert "Flask" in titles or "debug" in titles
+
+
+def test_builtin_sca_offline_is_empty_without_requirements(tmp_path):
+    _w(tmp_path, "app.py", "import os\n")
+    assert sa.builtin_sca(tmp_path, offline=True) == []
+
+
+def test_builtin_sca_curated_cve(tmp_path):
+    _w(tmp_path, "requirements.txt", "Flask==1.0\n")
+    findings = sa.builtin_sca(tmp_path, offline=True)
+    assert any("CVE-2023-30861" in f.detail for f in findings)
+
+
+# ── orchestration ────────────────────────────────────────────────────────────
+
+def test_orchestrate_only_subset(tmp_path):
+    _w(tmp_path, "app.py", "app.run(debug=True)\n")
+    result = sa.orchestrate(tmp_path, offline=True, only=["sast"])
+    assert set(result["layers"]) == {"sast"}
+    assert result["layers"]["sast"].engine == "built-in"   # no semgrep installed
+
+
+def test_orchestrate_default_runs_all_non_dast(tmp_path):
+    result = sa.orchestrate(tmp_path, offline=True, only=[])
+    assert set(result["layers"]) == {"secrets", "sca", "sast", "ai_posture"}
+    assert "dast" not in result["layers"]                   # DAST only with a URL
+
+
+def test_from_ext_normalizes_severity():
+    rows = [{"severity": "error", "title": "x", "file": "a", "line": 3, "tool": "semgrep"}]
+    out = sa._from_ext("sast", rows)
+    assert out[0].severity == "HIGH" and out[0].scan_type == "sast" and out[0].line == 3
+
+
+# ── rendering + fix prompts ──────────────────────────────────────────────────
+
+def test_group_aggregates_by_title():
+    fs = [sa.ScanFinding("sast", "HIGH", "A"), sa.ScanFinding("sast", "HIGH", "A"),
+          sa.ScanFinding("sast", "MEDIUM", "B")]
+    groups = sa._group(fs)
+    assert ("HIGH", "A", 2) in groups and ("MEDIUM", "B", 1) in groups
+    assert groups[0][0] == "HIGH"                           # critical/high first
+
+
+def test_render_compact_runs_and_labels(tmp_path):
+    _w(tmp_path, "app.py", "app.run(debug=True)\n")
+    result = sa.orchestrate(tmp_path, offline=True, only=["sast", "secrets"])
+    txt = sa.render_compact(result, no_color=True)
+    assert "STATIC ANALYSIS" in txt and "SECRETS" in txt
+
+
+def test_render_html_has_collapsible_sections(tmp_path):
+    result = sa.orchestrate(tmp_path, offline=True, only=["sast"])
+    out = sa.render_html(result)
+    assert "<details" in out and "STATIC ANALYSIS" in out and "<!doctype html>" in out
+
+
+def test_fix_prompt_contains_findings_and_role():
+    f = sa.ScanFinding("sast", "HIGH", "SQL injection via f-string", "detail",
+                       "app.py", 10, "use parameterised queries", "semgrep")
+    text = sa.fix_prompt("sast", [f], "/repo")
+    assert "SQL injection via f-string" in text
+    assert "app.py:10" in text
+    assert "security engineer" in text.lower()
+
+
+def test_write_fix_prompts_only_for_layers_with_findings(tmp_path):
+    _w(tmp_path, "app.py", "app.run(debug=True)\n")
+    result = sa.orchestrate(tmp_path, offline=True, only=["sast", "sca"])
+    written = sa.write_fix_prompts(result, tmp_path / ".sap")
+    names = {p.name for p in written}
+    assert "fix-sast.md" in names          # sast has a finding
+    assert "fix-sca.md" not in names       # sca is clean offline → no prompt file

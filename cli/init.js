@@ -38,6 +38,9 @@ const FILES_TO_COPY = [
   path.join("scripts", "check_packages.py"),
   path.join("scripts", "run_pipeline.py"),
   path.join("scripts", "sarif_gate.py"),
+  // Unified multi-scanner local scan (secrets/SCA/SAST/posture/DAST)
+  path.join("scripts", "scan_all.py"),
+  path.join("scripts", "external_tools.py"),
   // AI-posture scanners + Blast Radius Score
   path.join("scripts", "blast_radius.py"),
   path.join("scripts", "report.py"),
@@ -48,7 +51,7 @@ const FILES_TO_COPY = [
   ".pre-commit-config.yaml",
 ];
 
-const GITIGNORE_ENTRY = "pipeline-results.json";
+const GITIGNORE_ENTRIES = ["pipeline-results.json", ".secure-ai-pipeline/"];
 
 // ── small ANSI helpers (no dependency) ──────────────────────────────────────
 const color = (code, s) => `[${code}m${s}[0m`;
@@ -87,20 +90,16 @@ function copyFile(relPath) {
 
 function ensureGitignoreEntry() {
   const gi = path.join(TARGET, ".gitignore");
-  let contents = "";
-  if (fs.existsSync(gi)) {
-    contents = fs.readFileSync(gi, "utf8");
-    const lines = contents.split(/\r?\n/).map((l) => l.trim());
-    if (lines.includes(GITIGNORE_ENTRY)) {
-      console.log(`  ${dim("exists")}  .gitignore already ignores ${GITIGNORE_ENTRY}`);
-      return;
-    }
-    const sep = contents.endsWith("\n") || contents === "" ? "" : "\n";
-    fs.appendFileSync(gi, `${sep}${GITIGNORE_ENTRY}\n`);
-  } else {
-    fs.writeFileSync(gi, `${GITIGNORE_ENTRY}\n`);
+  let contents = fs.existsSync(gi) ? fs.readFileSync(gi, "utf8") : "";
+  const present = new Set(contents.split(/\r?\n/).map((l) => l.trim()));
+  const missing = GITIGNORE_ENTRIES.filter((e) => !present.has(e));
+  if (missing.length === 0) {
+    console.log(`  ${dim("exists")}  .gitignore already has the entries`);
+    return;
   }
-  console.log(`  ${green("added")}  .gitignore entry for ${GITIGNORE_ENTRY}`);
+  const sep = contents === "" || contents.endsWith("\n") ? "" : "\n";
+  fs.appendFileSync(gi, sep + missing.map((e) => `${e}\n`).join(""));
+  console.log(`  ${green("added")}  .gitignore entries: ${missing.join(", ")}`);
 }
 
 function commandExists(cmd) {
@@ -160,15 +159,26 @@ Usage:
   npx secure-ai-pipeline@latest <command>
 
 Commands:
-  scan [DIR]     Run the AI Agent Blast Radius checkup on a repo (default: .)
-                   --html FILE   write an HTML report
+  scan [DIR]     Full local scan — Secrets, SCA + malicious packages, SAST,
+                 AI blast radius, and (optional) DAST. One table per layer.
+                   --detail T    expand a layer (secrets|sca|sast|dast|posture|all)
+                   --dast-url U  run a ZAP DAST scan against a running app URL
+                   --only T,..   run only these layers
+                   --tools       show which OSS engines are installed
+                   --html FILE   write a clickable HTML report
                    --json FILE   write a JSON report
                    --offline     skip network package checks
+                   --no-input    never prompt (CI mode)
                    --fail-on L   exit non-zero at/above severity L
                                  (critical | high | medium — case-insensitive)
+  posture [DIR]  Run only the AI Agent Blast Radius checkup
   init           Install the CI pipeline + hooks into the current repo (idempotent)
-  doctor         Check that prerequisites (python3, git) are available
-  help           Show this help`);
+  doctor         Check prerequisites + which OSS scanner engines are installed
+  help           Show this help
+
+  Optional OSS engines (auto-used when installed, built-in fallback otherwise):
+    gitleaks (secrets) · semgrep (SAST) · trivy (SCA) · osv-scanner
+    (malicious packages) · ZAP/Docker (DAST)`);
 }
 
 function runInit() {
@@ -197,6 +207,9 @@ function run() {
   }
   if (arg === "scan") {
     process.exit(require("./scan.js").runScan(rest));
+  }
+  if (arg === "posture" || arg === "blast-radius") {
+    process.exit(require("./scan.js").runPosture(rest));
   }
   if (arg === "doctor") {
     process.exit(require("./scan.js").runDoctor());

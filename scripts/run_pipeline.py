@@ -47,6 +47,11 @@ class Finding:
 # Shared utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Inline suppression: a line carrying one of these markers is skipped by the
+# secret and SAST line scanners (same convention as Semgrep's `nosemgrep` and
+# Bandit's `nosec`). Lets users silence a confirmed-safe match in place.
+_SUPPRESS_RE = re.compile(r"\bnosemgrep\b|\bnosec\b|sap-ignore", re.IGNORECASE)
+
 # Offline fast-path of known-real PyPI packages. Deliberately NOT exhaustive:
 # names outside this list WARN (never block) and point to the network guard
 # (check_packages.py), which gives the authoritative verdict.
@@ -151,6 +156,8 @@ def stage0_secrets(src: Path) -> list[Finding]:
     findings = []
     lines = src.read_text(encoding="utf-8", errors="replace").splitlines()
     for i, line in enumerate(lines, 1):
+        if _SUPPRESS_RE.search(line):
+            continue
         for rule_id, pat, desc in SECRET_PATTERNS:
             m = pat.search(line)
             if m:
@@ -180,7 +187,7 @@ SAST_REGEX_RULES = [
      re.compile(r'requests\.\w+\s*\(.*verify\s*=\s*False'),
      "TLS certificate verification disabled (verify=False). Allows MITM attacks."),
     ("wildcard-cors",       "WARNING", "WARN",
-     re.compile(r'origins\s*=\s*["\']\*["\']|Access-Control-Allow-Origin.*\*'),
+     re.compile(r'origins\s*=\s*["\']\*["\']|Access-Control-Allow-Origin.*\*'),  # nosemgrep: rule definition, not a CORS misconfig
      "Wildcard CORS — any origin can make credentialed requests to this API."),
     ("subprocess-shell-true","ERROR", "BLOCK",
      re.compile(r'subprocess\.\w+\s*\(.*shell\s*=\s*True'),
@@ -200,6 +207,8 @@ def stage1_sast(src: Path) -> list[Finding]:
     findings = []
     lines = src.read_text(encoding="utf-8", errors="replace").splitlines()
     for i, line in enumerate(lines, 1):
+        if _SUPPRESS_RE.search(line):
+            continue
         for rule_id, sev, action, pat, msg in SAST_REGEX_RULES:
             if pat.search(line):
                 findings.append(Finding(

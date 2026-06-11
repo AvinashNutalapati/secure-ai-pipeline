@@ -58,7 +58,7 @@ export const RULES: SecurityRule[] = [
     severity: "warning",
     message:
       "Wildcard CORS (origins=\"*\") lets any website make credentialed requests. Restrict to trusted origins.",
-    trigger: /origins\s*=\s*["']\*["']|Access-Control-Allow-Origin["']?\s*[:=]\s*["']\*["']/,
+    trigger: /origins\s*=\s*["']\*["']|Access-Control-Allow-Origin["']?\s*[:=]\s*["']\*["']/, // nosemgrep: rule definition, not a CORS misconfig
     target: /["']\*["']/,
     languages: ["python", "javascript"],
     fix: () => ({

@@ -22,3 +22,6 @@ extensions/vscode/out/
 
 # OS
 .DS_Store
+
+# Generated fix prompts
+.secure-ai-pipeline/

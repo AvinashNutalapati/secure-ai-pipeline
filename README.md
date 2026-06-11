@@ -21,23 +21,42 @@ npx secure-ai-pipeline@latest scan .
 ```
 
 That's the whole onboarding. It runs locally (no account, no upload, no telemetry)
-and prints your **AI Agent Blast Radius Score** — how far an attacker who gets a
-foothold in your AI workflow could reach — with a concrete fix for every finding:
+and prints one compact table per scan layer — **Secrets, Dependencies (SCA +
+malicious packages), SAST, AI workflow blast radius**, and optional DAST:
 
 ```text
-  AI Agent Blast Radius Score: 55/100  (grade C)
-  1 critical  2 high  1 medium
+  Secure AI Pipeline — full scan
 
-  ● CRITICAL  MCP server 'github' receives secrets via env      mcp.json
-      fix: Use short-lived/OAuth tokens scoped to the server, or a secrets broker.
-  ● HIGH      Claude has wildcard shell access                  .claude/settings.json
-      fix: Allow only specific commands, e.g. Bash(npm test*).
-  ● HIGH      Action not pinned by SHA: actions/checkout@v4     .github/workflows/ci.yml
-      fix: Pin to a full 40-char commit SHA.
+  ▍ SECRETS                          · gitleaks
+      1 critical
+      CRITICAL      Secret detected: AWS access key id
+
+  ▍ DEPENDENCIES (SCA + malicious packages)   · trivy + osv-scanner
+      1 critical  3 high
+      CRITICAL      MALICIOUS PACKAGE: evil-pkg 1.0.0 — MAL-2024-0001
+      HIGH     ×3   Vulnerable dependency: lodash 4.17.0 — CVE-…
+
+  ▍ STATIC ANALYSIS (SAST)           · semgrep
+      2 high
+      HIGH          SQL query built from an f-string
+
+  ▍ AI WORKFLOW BLAST RADIUS         · built-in
+      1 critical  5 high
+      CRITICAL      Workflow uses pull_request_target
+      …
+
+  ▍ DYNAMIC ANALYSIS (DAST)          · not run
+      pass --dast-url <url> (or answer the prompt) to scan a running app
 ```
 
-Add `--html report.html` for a shareable report. Want to watch it light up first?
-Point it at the deliberately-insecure demo repo:
+Initial output stays compact — **severity + title only**. Drill into any layer with
+`--detail sast` (or just answer the interactive prompt), get a clickable report with
+`--html report.html`, and a ready-to-paste **fix prompt is generated per layer** in
+`.secure-ai-pipeline/`. Each layer uses its open-source scanner when installed
+(gitleaks, semgrep, trivy, osv-scanner, ZAP) and a built-in fallback otherwise —
+`scan --tools` shows what you have and how to install the rest.
+
+Want to watch it light up first? Point it at the deliberately-insecure demo repo:
 
 ```bash
 git clone https://github.com/AvinashNutalapati/secure-ai-pipeline-demo
@@ -169,14 +188,41 @@ mcp:
 ```
 
 No policy file? `scan` stays report-only and friendly. There's also
-`--fail-on high` for one-off CI gating, `--offline` to skip network checks, and a
-pure-local pipeline rehearsal: `python scripts/run_pipeline.py app.py requirements.txt`.
+`--fail-on high` for one-off CI gating, `--offline` to skip network checks,
+`--exclude 'data/**,test/**'` to silence fixture/vendor dirs, and inline
+`# nosemgrep` / `# nosec` comments to suppress a confirmed-safe line in place.
+
+### Run the full scan
+
+```bash
+npx secure-ai-pipeline scan .                 # all layers, compact tables
+npx secure-ai-pipeline scan . --detail sast   # drill into one layer
+npx secure-ai-pipeline scan . --dast-url http://localhost:3000   # add a DAST pass
+npx secure-ai-pipeline scan . --html report.html --json report.json
+npx secure-ai-pipeline scan . --tools         # which OSS engines are installed
+npx secure-ai-pipeline posture .              # just the AI blast-radius checkup
+```
+
+**Install the OSS engines for deeper coverage** (the scan auto-uses them, and
+falls back to built-ins otherwise — all open source, no accounts):
+
+```bash
+brew install gitleaks trivy osv-scanner   # secrets · CVEs · malicious packages
+pipx install semgrep                      # full SAST (JS/TS + community rules)
+# DAST uses ZAP via Docker (https://docs.docker.com/get-docker/)
+```
+
+> Malicious-package detection uses **OSV-Scanner** (open source, reads the OSV
+> `MAL-` advisories). Socket.dev needs a paid account/API key, so it's an opt-in
+> add-on (`SOCKET_API_KEY` + `npm i -g @socketsecurity/cli`), not the default.
 
 ## Privacy & trust
 
 - **Local-first:** `scan`, the editor extension, and the pre-commit hooks never
-  upload your code. The only network calls are existence checks of package
-  *names* against PyPI/npm (skippable with `--offline`).
+  upload your code. The built-in scanners' only network calls are existence
+  checks of package *names* against PyPI/npm (skippable with `--offline`). The
+  optional OSS engines run locally too; trivy/osv-scanner fetch their own
+  vulnerability databases, which you can pre-cache for air-gapped use.
 - **Fail-closed where it counts:** missing scanner output fails the gate; a
   pending (`underReview`) suppression doesn't sneak findings through; registry
   outages warn instead of inventing verdicts.

@@ -3,9 +3,11 @@
 /**
  * `scan` and `doctor` subcommands.
  *
- * `scan` shells out to scripts/blast_radius.py (bundled in the package) to run the
- * AI Agent Blast Radius checkup against the target repo, passing through flags
- * (--html / --json / --offline / --fail-on). `doctor` checks prerequisites.
+ * `scan` shells out to scripts/scan_all.py (bundled in the package) to run the
+ * full unified scan — Secrets, SCA + malicious packages, SAST, AI blast radius,
+ * and optional DAST — passing through flags (--html / --json / --offline /
+ * --fail-on / --detail / --dast-url / --only / --tools …). `posture` runs just
+ * the AI blast-radius checkup (scripts/blast_radius.py). `doctor` checks prereqs.
  *
  * Node built-ins only — no npm dependencies.
  */
@@ -15,6 +17,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 
 const PKG_ROOT = path.join(__dirname, "..");
+const SCAN_ALL = path.join(PKG_ROOT, "scripts", "scan_all.py");
 const BLAST_RADIUS = path.join(PKG_ROOT, "scripts", "blast_radius.py");
 
 const color = (c, s) => `\x1b[${c}m${s}\x1b[0m`;
@@ -49,7 +52,7 @@ function findPython() {
   return fallback;
 }
 
-function runScan(args) {
+function runScanWith(scriptPath, args) {
   const py = findPython();
   if (!py || py.tooOld) {
     const found = py ? ` Found ${py.version}.` : "";
@@ -57,17 +60,27 @@ function runScan(args) {
     console.error(dim("  Install from https://python.org or `brew install python`, then retry."));
     return 1;
   }
-  if (!fs.existsSync(BLAST_RADIUS)) {
-    console.error(red(`✗ scanner missing: ${BLAST_RADIUS}`));
+  if (!fs.existsSync(scriptPath)) {
+    console.error(red(`✗ scanner missing: ${scriptPath}`));
     return 1;
   }
-  // Pass args straight through; blast_radius.py defaults ROOT to the cwd.
-  const r = spawnSync(py.cmd, [BLAST_RADIUS, ...args], { stdio: "inherit" });
+  // Pass args straight through; the scanner defaults ROOT to the cwd.
+  const r = spawnSync(py.cmd, [scriptPath, ...args], { stdio: "inherit" });
   if (r.error) {
     console.error(red(`✗ failed to run scanner: ${r.error.message}`));
     return 1;
   }
   return r.status === null ? 1 : r.status;
+}
+
+// `scan` → the full unified scan (secrets/SCA/SAST/posture/DAST).
+function runScan(args) {
+  return runScanWith(SCAN_ALL, args);
+}
+
+// `posture` → just the AI blast-radius checkup (the old `scan` behaviour).
+function runPosture(args) {
+  return runScanWith(BLAST_RADIUS, args);
 }
 
 function check(label, ok, hint) {
@@ -99,16 +112,22 @@ function runDoctor() {
   check("inside a git repository", !inRepo.error && inRepo.status === 0,
     "Run inside a repo, or `git init` first (scan still works without git).");
 
-  ok &= check("blast-radius scanner present", fs.existsSync(BLAST_RADIUS),
-    "Reinstall the package.");
+  ok &= check("scanner present", fs.existsSync(SCAN_ALL), "Reinstall the package.");
 
-  if (py && !py.tooOld && fs.existsSync(BLAST_RADIUS)) {
+  if (py && !py.tooOld && fs.existsSync(SCAN_ALL)) {
     const imp = spawnSync(py.cmd, ["-c",
-      `import sys; sys.path.insert(0, ${JSON.stringify(path.join(PKG_ROOT, "scripts"))}); import blast_radius`],
+      `import sys; sys.path.insert(0, ${JSON.stringify(path.join(PKG_ROOT, "scripts"))}); import scan_all`],
       { stdio: "ignore" });
     ok &= check("scanners import cleanly", !imp.error && imp.status === 0,
       "The bundled Python scanners failed to import.");
   }
+
+  // Report which optional OSS engines are installed (informational, never fails).
+  const engines = ["semgrep", "trivy", "gitleaks", "osv-scanner", "docker"];
+  const present = engines.filter((e) =>
+    spawnSync(e, ["--version"], { stdio: "ignore" }).status === 0 ||
+    spawnSync("sh", ["-c", `command -v ${e}`], { stdio: "ignore" }).status === 0);
+  console.log(dim(`      OSS engines installed: ${present.length ? present.join(", ") : "none (built-in fallbacks will run)"}`));
 
   console.log("");
   if (ok) {
@@ -119,4 +138,4 @@ function runDoctor() {
   return 1;
 }
 
-module.exports = { runScan, runDoctor };
+module.exports = { runScan, runPosture, runDoctor };

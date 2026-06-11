@@ -41,7 +41,7 @@ SAST_RULES: list[SastRule] = [
     ),
     SastRule(
         "wildcard-cors", "WARNING", "WARN",
-        re.compile(r'origins\s*=\s*["\']\*["\']|Access-Control-Allow-Origin.*\*'),
+        re.compile(r'origins\s*=\s*["\']\*["\']|Access-Control-Allow-Origin.*\*'),  # nosemgrep: rule definition, not a CORS misconfig
         "Wildcard CORS — any origin can make credentialed requests to this API.",
         'Restrict to explicit origins, e.g. origins=["https://yourapp.example.com"].',
     ),
