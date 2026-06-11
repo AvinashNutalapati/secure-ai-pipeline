@@ -93,7 +93,7 @@ jobs:
             --sarif --output semgrep.sarif
 
       - name: Upload SARIF to GitHub
-        if: always()
+        if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
         with:
           sarif_file: semgrep.sarif
@@ -114,6 +114,10 @@ jobs:
 
       - name: Trivy — filesystem scan (deps + IaC)
         uses: aquasecurity/trivy-action@b2933f565dbc598b29947660e66259e3c7bc8561 # v0.20.0
+        env:
+          # Mirror DBs (ghcr.io is rate-limited and fails the DB download).
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1
         with:
           scan-type: "fs"
           scan-ref: "."
@@ -124,7 +128,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload SARIF
-        if: always()
+        if: ${{ always() && hashFiles('trivy-fs.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
         with:
           sarif_file: trivy-fs.sarif
