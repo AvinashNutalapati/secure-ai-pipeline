@@ -103,3 +103,59 @@ def test_not_blocking_when_clean(tmp_path):
         + rp.stage1_sca(req)
     )
     assert not any(f.action == "BLOCK" for f in findings)
+
+
+# ── regression: review fixes ─────────────────────────────────────────────────
+
+def test_relative_imports_not_flagged(tmp_path):
+    # `from .utils import x` resolves locally — never a registry package.
+    src = _write(tmp_path, "mod.py", "from .utils import helper\nfrom . import other\n")
+    assert rp.stage0_packages(src) == []
+
+
+def test_unknown_import_warns_never_blocks(tmp_path):
+    # scrapy is real but outside the offline list — the offline heuristic must
+    # WARN (verify with check_packages), never hard-block a real package.
+    src = _write(tmp_path, "app.py", "import scrapy\n")
+    findings = rp.stage0_packages(src)
+    assert [f.rule_id for f in findings] == ["unverified-package"]
+    assert findings[0].action == "WARN"
+
+
+def test_stdlib_shared_with_check_packages(tmp_path):
+    # These broke the old duplicated stdlib copy (it was missing ~40 modules).
+    src = _write(tmp_path, "app.py", "import fnmatch\nimport shlex\nimport select\n")
+    assert rp.stage0_packages(src) == []
+
+
+def test_secret_value_containing_example_still_blocks(tmp_path):
+    # Substring placeholder matching let real keys through; only WHOLE-value
+    # placeholders may be skipped.
+    src = _write(tmp_path, "app.py", 'api_key = "examplecorp_prod_8f3a9b2c11dd"\n')
+    assert "hardcoded-api-key" in {f.rule_id for f in rp.stage0_secrets(src)}
+
+
+def test_placeholder_values_skipped(tmp_path):
+    src = _write(tmp_path, "app.py",
+                 'api_key = "your_api_key_here"\ntoken = "placeholder"\n')
+    assert rp.stage0_secrets(src) == []
+
+
+def test_parameterized_percent_s_is_clean(tmp_path):
+    # The canonical SAFE form — the rule's own fix text recommends it.
+    assert "sql-injection-fstring" not in _sast_rule_ids(
+        tmp_path, 'cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))\n'
+    )
+
+
+def test_percent_operator_after_string_fires(tmp_path):
+    assert "sql-injection-fstring" in _sast_rule_ids(
+        tmp_path, 'cursor.execute("SELECT * FROM users WHERE id = %s" % user_id)\n'
+    )
+
+
+def test_missing_requirements_path_warns(tmp_path):
+    # A typo'd path must say "SCA skipped", not print a green PASS.
+    findings = rp.stage1_sca(tmp_path / "nope.txt")
+    assert [f.rule_id for f in findings] == ["requirements-not-found"]
+    assert findings[0].action == "WARN"

@@ -42,7 +42,13 @@ RISKY_DIRECTIVES = [
     (re.compile(r"(?i)(ignore (all )?(previous|prior) instructions|disregard (the )?(system|above))"),
      "prompt-injection", "CRITICAL",
      "Rule text contains prompt-injection-style override language."),
-    (re.compile(r"(?i)(exfiltrat|send .*(secret|token|key|env)|POST .*(http))"),
+    # Word-boundaried: "send keyboard shortcuts" / "environment details" must
+    # NOT match — only sending of secrets/tokens/keys/credentials/.env does.
+    (re.compile(r"(?i)(?:exfiltrat"
+                r"|send\s.*\b(?:secrets?|tokens?|api[_ -]?keys?|credentials?"
+                r"|passwords?|environment\s+variables?)\b"
+                r"|send\s.*\s\.env\b"
+                r"|POST\s.*https?://)"),
      "exfiltration", "CRITICAL",
      "Rule text resembles an exfiltration instruction."),
 ]

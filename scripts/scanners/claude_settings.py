@@ -28,6 +28,30 @@ DESTRUCTIVE_BASH = re.compile(r"(?i)Bash\(\s*(rm\s+-rf|sudo|curl[^)]*\|\s*sh|:\(
 WILDCARD_BASH = re.compile(r"(?i)Bash\(\s*\*\s*\)|Bash\(\s*\)")
 BROAD_NET = re.compile(r"(?i)(WebFetch|WebSearch)\(\s*\*?\s*\)")
 
+# A bare tool name in an allow list (no parenthesised specifier) approves the
+# tool for EVERYTHING — broader than any scoped rule. "Bash" ≈ Bash(*).
+BARE_TOOL_RULES = {
+    "bash": ("claude-wildcard-bash", "HIGH",
+             "Claude has unrestricted shell access",
+             "approves every shell command without prompting"),
+    "webfetch": ("claude-broad-network", "MEDIUM",
+                 "Claude has unrestricted network fetch",
+                 "lets the agent fetch any URL — an exfiltration channel under "
+                 "prompt injection"),
+    "websearch": ("claude-broad-network", "MEDIUM",
+                  "Claude has unrestricted network search",
+                  "lets the agent reach arbitrary external content without prompting"),
+    "read": ("claude-broad-read", "CRITICAL",
+             "Claude can read any path without prompting",
+             "approves reads of ANY path, including outside the workspace"),
+    "edit": ("claude-broad-read", "CRITICAL",
+             "Claude can edit any path without prompting",
+             "approves edits of ANY path, including outside the workspace"),
+    "write": ("claude-broad-read", "CRITICAL",
+              "Claude can write any path without prompting",
+              "approves writes to ANY path, including outside the workspace"),
+}
+
 
 def _is_claude_settings(path: Path) -> bool:
     return path.name in CLAUDE_SETTINGS_NAMES and ".claude" in path.parts
@@ -60,6 +84,18 @@ def scan(root: Path) -> list[Finding]:
 
         for rule in allow if isinstance(allow, list) else []:
             r = str(rule)
+            bare = r.strip().lower()
+            if bare in BARE_TOOL_RULES:
+                rule_id, sev, title, why = BARE_TOOL_RULES[bare]
+                findings.append(Finding(
+                    "claude", "Claude permissions", rule_id, sev,
+                    title,
+                    f"Bare allow rule `{r}` in {where} {why}.",
+                    "Scope the rule with a specifier, e.g. Bash(npm test*) or "
+                    "Read(./**); never allow a bare tool name.",
+                    where,
+                ))
+                continue
             if ESCAPING_READ.search(r):
                 sev = "CRITICAL" if re.search(r"(/Users|/home|~|//?\*\*)", r) else "HIGH"
                 findings.append(Finding(

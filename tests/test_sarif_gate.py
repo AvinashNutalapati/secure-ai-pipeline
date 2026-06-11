@@ -50,6 +50,24 @@ def test_rejected_suppression_still_gates(tmp_path, monkeypatch):
     assert _run(path, fail_on_warnings=False, monkeypatch=monkeypatch) == 1
 
 
+def test_under_review_suppression_still_gates(tmp_path, monkeypatch):
+    # Only accepted (or status-less) suppressions suppress; a suppression that
+    # is still awaiting review must not open the gate.
+    path = _sarif(tmp_path, "ur.sarif", [
+        {"ruleId": "x", "level": "error",
+         "suppressions": [{"kind": "external", "status": "underReview"}]},
+    ])
+    assert _run(path, fail_on_warnings=False, monkeypatch=monkeypatch) == 1
+
+
+def test_accepted_suppression_is_ignored(tmp_path, monkeypatch):
+    path = _sarif(tmp_path, "acc.sarif", [
+        {"ruleId": "x", "level": "error",
+         "suppressions": [{"kind": "external", "status": "accepted"}]},
+    ])
+    assert _run(path, fail_on_warnings=False, monkeypatch=monkeypatch) == 0
+
+
 def test_error_blocks_when_flag_on(tmp_path, monkeypatch):
     path = _sarif(tmp_path, "e.sarif", [{"ruleId": "tls-verify-false", "level": "error"}])
     assert _run(path, fail_on_warnings=True, monkeypatch=monkeypatch) == 1
@@ -87,9 +105,11 @@ def test_clean_sarif_passes(tmp_path, monkeypatch):
     assert _run(path, fail_on_warnings=True, monkeypatch=monkeypatch) == 0
 
 
-def test_missing_file_is_treated_as_clean(tmp_path, monkeypatch):
+def test_missing_file_fails_closed(tmp_path, monkeypatch):
+    # A missing SARIF means the scanner never ran (crash or wrong path); the
+    # gate must fail closed rather than silently pass with zero coverage.
     missing = str(tmp_path / "nope.sarif")
-    assert _run(missing, fail_on_warnings=True, monkeypatch=monkeypatch) == 0
+    assert _run(missing, fail_on_warnings=True, monkeypatch=monkeypatch) == 1
 
 
 def test_truthy_env_values(tmp_path, monkeypatch):

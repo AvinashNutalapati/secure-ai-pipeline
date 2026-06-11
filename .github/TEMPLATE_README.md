@@ -1,6 +1,6 @@
 # Secure AI Pipeline
 
-![Security Pipeline](https://github.com/AvinashNutalapati/REPO_NAME/actions/workflows/security.yml/badge.svg)
+![Security Pipeline](https://github.com/GITHUB_USER/REPO_NAME/actions/workflows/security.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
 A drop-in security pipeline for code written with AI assistants (Cursor, Copilot, Claude Code).
@@ -21,8 +21,15 @@ DevSecOps template catches AI-invented package names, and this one does.
 ## Use the marketplace Action in any other repo
 
 ```yaml
-- uses: AvinashNutalapati/secure-ai-pipeline@v1
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0                              # full history for the secrets scan
+- uses: AvinashNutalapati/secure-ai-pipeline@v2
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # composite actions can't read secrets
 ```
+
+More: [secure-ai-pipeline on GitHub](https://github.com/AvinashNutalapati/secure-ai-pipeline) · [mirawyn.com](https://mirawyn.com)
 
 ## What gets scanned
 

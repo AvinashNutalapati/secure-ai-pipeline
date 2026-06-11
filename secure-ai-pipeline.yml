@@ -1,4 +1,5 @@
 # Policy for THIS repo's own AI Blast Radius scan / CI gate.
+# fail_on is a threshold: the least-severe level listed and everything above it.
 fail_on:
   - critical
   - high

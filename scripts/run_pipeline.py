@@ -7,7 +7,7 @@ Implements the same detection logic as the real CI tools (Gitleaks, check_packag
 Semgrep custom rules, Trivy SCA) — no network or external binaries required.
 
 Usage:
-    python scripts/run_pipeline.py path/to/app.py path/to/requirements.txt
+    python scripts/run_pipeline.py path/to/app.py [path/to/requirements.txt]
 """
 
 import ast
@@ -16,7 +16,13 @@ import sys
 import json
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Optional
+
+# Make sibling modules importable regardless of the invocation directory, then
+# share the stdlib allowlist with the authoritative network guard — one source
+# of truth instead of a second, drifting copy.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_packages import PYTHON_STDLIB  # noqa: E402
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data model
@@ -41,22 +47,9 @@ class Finding:
 # Shared utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
-PYTHON_STDLIB = {
-    "os","sys","re","io","abc","ast","csv","json","math","time","enum","copy",
-    "uuid","hmac","stat","glob","shutil","queue","array","heapq","struct",
-    "socket","string","random","logging","hashlib","pathlib","urllib","typing",
-    "decimal","inspect","functools","itertools","datetime","calendar","textwrap",
-    "threading","multiprocessing","subprocess","contextlib","collections",
-    "dataclasses","configparser","http","html","xml","email","smtplib","ssl",
-    "base64","binascii","codecs","pickle","shelve","sqlite3","zlib","gzip",
-    "bz2","lzma","zipfile","tarfile","tempfile","platform","traceback",
-    "warnings","unittest","argparse","getopt","getpass","gc","weakref","ctypes",
-    "concurrent","asyncio","builtins","__future__","types","numbers","fractions",
-    "cmath","statistics","secrets","token","tokenize","keyword","dis","marshal",
-    "importlib","pkgutil","runpy","site","sysconfig","sqlite3","signal",
-}
-
-# Real packages that exist on PyPI (representative whitelist for demo)
+# Offline fast-path of known-real PyPI packages. Deliberately NOT exhaustive:
+# names outside this list WARN (never block) and point to the network guard
+# (check_packages.py), which gives the authoritative verdict.
 KNOWN_PYPI = {
     "flask","flask_cors","requests","django","fastapi","sqlalchemy","celery",
     "redis","boto3","pandas","numpy","scipy","matplotlib","pillow","pytest",
@@ -78,7 +71,7 @@ KNOWN_PYPI = {
 def stage0_packages(src: Path) -> list[Finding]:
     findings = []
     try:
-        tree = ast.parse(src.read_text(encoding="utf-8"))
+        tree = ast.parse(src.read_text(encoding="utf-8", errors="replace"))
     except SyntaxError as e:
         return [Finding("Stage 0","check_packages","parse-error","HIGH","BLOCK",
                         str(e), str(src))]
@@ -88,21 +81,30 @@ def stage0_packages(src: Path) -> list[Finding]:
             for a in node.names:
                 imports.add((a.name.split(".")[0], node.lineno))
         elif isinstance(node, ast.ImportFrom):
+            # Relative imports (`from .utils import x`) resolve locally —
+            # never a registry package.
+            if node.level and node.level > 0:
+                continue
             if node.module:
                 imports.add((node.module.split(".")[0], node.lineno))
 
-    lines = src.read_text().splitlines()
+    lines = src.read_text(encoding="utf-8", errors="replace").splitlines()
     for pkg, lineno in sorted(imports, key=lambda x: x[1]):
         if pkg in PYTHON_STDLIB:
             continue
         norm = pkg.lower().replace("-","_")
         if norm not in KNOWN_PYPI:
             snippet = lines[lineno-1].strip() if lineno <= len(lines) else ""
+            # Offline heuristic: an unknown name is UNVERIFIED, not proven
+            # hallucinated — warn and defer the hard verdict to the network
+            # guard so real packages are never blocked locally.
             findings.append(Finding(
                 stage="Stage 0", tool="check_packages",
-                rule_id="hallucinated-package",
-                severity="HIGH", action="BLOCK",
-                message=f"Package '{pkg}' not found on PyPI — possible AI hallucination (slopsquatting risk).",
+                rule_id="unverified-package",
+                severity="MEDIUM", action="WARN",
+                message=(f"'{pkg}' is not in the offline known-package list. "
+                         "Verify it exists before installing: "
+                         "`python scripts/check_packages.py .` (network check)."),
                 file=str(src), line=lineno, snippet=snippet
             ))
     return findings
@@ -127,16 +129,35 @@ SECRET_PATTERNS = [
      "Private key block in source"),
 ]
 
+# A value is a placeholder only when the WHOLE value matches one of these
+# shapes. Substring checks are dangerous: a real key that merely contains
+# "example" (e.g. examplecorp_prod_8f3a…) must still block.
+PLACEHOLDER_VALUE = re.compile(
+    r"^(?:x{4,}|\*{3,}|\.{3,}|<[^<>]{0,60}>"
+    r"|changeme|change[-_]me|placeholder|dummy|redacted|todo|tbd|none|null"
+    r"|example(?:[-_](?:api[-_]?key|key|token|secret|value|password))?"
+    r"|sample(?:[-_](?:api[-_]?key|key|token|secret|value))?"
+    r"|your[-_][a-z_-]{0,40})$",
+    re.IGNORECASE,
+)
+
+
+def _is_placeholder(value: str) -> bool:
+    v = value.strip().strip("'\"")
+    return bool(PLACEHOLDER_VALUE.match(v))
+
+
 def stage0_secrets(src: Path) -> list[Finding]:
     findings = []
-    lines = src.read_text().splitlines()
+    lines = src.read_text(encoding="utf-8", errors="replace").splitlines()
     for i, line in enumerate(lines, 1):
         for rule_id, pat, desc in SECRET_PATTERNS:
             m = pat.search(line)
             if m:
-                # Skip obvious non-secrets
-                val = m.group(0)
-                if any(x in val.lower() for x in ["example","placeholder","changeme","your_","<",">"]):
+                # Check the captured VALUE (last group) against whole-value
+                # placeholder shapes only.
+                value = m.group(m.lastindex) if m.lastindex else m.group(0)
+                if _is_placeholder(value):
                     continue
                 findings.append(Finding(
                     stage="Stage 0", tool="Gitleaks",
@@ -165,7 +186,10 @@ SAST_REGEX_RULES = [
      re.compile(r'subprocess\.\w+\s*\(.*shell\s*=\s*True'),
      "subprocess shell=True with user input → command injection."),
     ("sql-injection-fstring","ERROR", "BLOCK",
-     re.compile(r'\.execute\s*\(\s*f["\']|\.execute\s*\(\s*["\'].*%\s*\w|\.execute\s*\(\s*["\'].*\+\s*\w'),
+     # The %/+/.format branches require the operator AFTER the closing quote so
+     # the safe parameterised form execute("… %s", (val,)) never matches.
+     re.compile(r'\.execute\s*\(\s*f["\']'
+                r'|\.execute\s*\(\s*["\'][^"\']*["\']\s*(?:%|\+|\.\s*format\s*\()'),
      "SQL query built via f-string/concatenation — parameterise with cursor.execute(sql,(val,))."),
     ("eval-user-input",     "ERROR", "BLOCK",
      re.compile(r'eval\s*\(\s*request\.|exec\s*\(\s*request\.'),
@@ -174,7 +198,7 @@ SAST_REGEX_RULES = [
 
 def stage1_sast(src: Path) -> list[Finding]:
     findings = []
-    lines = src.read_text().splitlines()
+    lines = src.read_text(encoding="utf-8", errors="replace").splitlines()
     for i, line in enumerate(lines, 1):
         for rule_id, sev, action, pat, msg in SAST_REGEX_RULES:
             if pat.search(line):
@@ -209,24 +233,36 @@ KNOWN_CVES = {
     ],
 }
 
-def parse_requirements(req: Path) -> list[tuple[str,str]]:
+def parse_requirements(req: Optional[Path]) -> list[tuple[str,str]]:
     """Returns list of (pkg_name_normalised, version) from requirements.txt.
-    Returns [] if the requirements file is missing/unspecified."""
+    Returns [] if no requirements file was given."""
     result = []
     if not req or not req.is_file():
         return result
-    for line in req.read_text().splitlines():
+    for line in req.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        m = re.match(r'^([A-Za-z0-9_\-]+)==([^\s#]+)', line)
+        m = re.match(r'^([A-Za-z0-9_\-.]+)==([^\s#]+)', line)
         if m:
             result.append((m.group(1).lower().replace("-","_"), m.group(2)))
     return result
 
-def stage1_sca(req: Path) -> list[Finding]:
+def stage1_sca(req: Optional[Path]) -> list[Finding]:
     findings = []
-    for pkg, ver in parse_requirements(req):
+    if req is not None and not req.is_file():
+        # A path was given but doesn't exist — say so instead of silently
+        # printing a green PASS (a typo'd path must not skip the CVE gate).
+        return [Finding(
+            stage="Stage 1", tool="Trivy",
+            rule_id="requirements-not-found",
+            severity="MEDIUM", action="WARN",
+            message=f"Requirements file '{req}' not found — SCA was SKIPPED. Fix the path to scan dependencies.",
+            file=str(req)
+        )]
+    pinned = parse_requirements(req)
+    known_cve_pkgs = {k[0] for k in KNOWN_CVES}
+    for pkg, ver in pinned:
         for cve_data in KNOWN_CVES.get((pkg, ver), []):
             sev = cve_data["severity"]
             action = "BLOCK" if sev in ("CRITICAL","HIGH") else "WARN"
@@ -237,15 +273,14 @@ def stage1_sca(req: Path) -> list[Finding]:
                 message=f"{pkg}=={ver} → {cve_data['id']}: {cve_data['desc']} (fix: >={cve_data['fixed']})",
                 file=str(req), snippet=f"{pkg}=={ver}"
             ))
-    # Flag non-existent package in requirements too
-    for pkg, ver in parse_requirements(req):
-        norm = pkg.lower().replace("-","_")
-        if norm not in KNOWN_PYPI and norm not in {k[0] for k in KNOWN_CVES}:
+        # Same offline-heuristic stance as stage0: unknown → verify, not block.
+        if pkg not in KNOWN_PYPI and pkg not in known_cve_pkgs:
             findings.append(Finding(
                 stage="Stage 1", tool="Trivy",
                 rule_id="unknown-package-in-requirements",
-                severity="HIGH", action="BLOCK",
-                message=f"'{pkg}' not found in any registry — remove from requirements.txt.",
+                severity="MEDIUM", action="WARN",
+                message=(f"'{pkg}' is not in the offline known-package list — verify it on PyPI "
+                         "(`python scripts/check_packages.py .`) before installing."),
                 file=str(req), snippet=f"{pkg}=={ver}"
             ))
     return findings
@@ -277,37 +312,54 @@ def print_banner(text: str):
     print(f"  {c('BOLD', text)}")
     print(c('BOLD', line))
 
+def _safe(stage: str, tool: str, fn, *args) -> list[Finding]:
+    """Run one gate; a crash becomes a visible finding instead of killing the
+    rest of the pipeline (and losing every other gate's findings)."""
+    try:
+        return fn(*args)
+    except Exception as exc:
+        return [Finding(
+            stage=stage, tool=tool, rule_id=f"{tool.lower()}-runner-error",
+            severity="HIGH", action="WARN",
+            message=(f"{tool} gate crashed ({exc.__class__.__name__}: {exc}) — "
+                     "findings from this gate are incomplete."),
+            file="",
+        )]
+
+
+def _print_findings(findings: list[Finding], pass_msg: str, *, by_line: bool = True) -> None:
+    for f in findings:
+        icon = c('CRITICAL', '● BLOCK') if f.action == "BLOCK" else c('WARN', '▲ WARN ')
+        where = f"line {f.line}" if by_line else f.snippet
+        print(f"    {icon}  [{f.rule_id}]  {where}")
+        if by_line and f.snippet:
+            print(f"           {c('DIM', f.snippet)}")
+        print(f"           {f.message}\n")
+    if not findings:
+        print(f"    {c('PASS','✓ PASS')}  {pass_msg}\n")
+
+
 def run_all(py_file: str, req_file: str) -> list[Finding]:
     src = Path(py_file)
-    req = Path(req_file)
+    req = Path(req_file) if req_file else None
 
     all_findings: list[Finding] = []
 
     print_banner("🔒  SECURE AI PIPELINE — LOCAL RUNNER")
     print(f"  Target : {c('BOLD', py_file)}")
-    print(f"  Deps   : {c('BOLD', req_file)}\n")
+    print(f"  Deps   : {c('BOLD', req_file or '(none — SCA will be skipped)')}\n")
 
     # ── Stage 0 ───────────────────────────────────────────────────────────────
     print_banner("STAGE 0  |  Secrets & Package Validation")
 
     print(f"\n  {c('BOLD','[check_packages]')} Anti-slopsquatting scan …")
-    pkg_findings = stage0_packages(src)
-    for f in pkg_findings:
-        print(f"    {c('BLOCK','● BLOCK')}  [{f.rule_id}]  line {f.line}")
-        print(f"           {c('DIM', f.snippet)}")
-        print(f"           {f.message}\n")
-    if not pkg_findings:
-        print(f"    {c('PASS','✓ PASS')}  All imports verified on PyPI\n")
+    pkg_findings = _safe("Stage 0", "check_packages", stage0_packages, src)
+    _print_findings(pkg_findings, "All imports are stdlib or known-real packages")
     all_findings.extend(pkg_findings)
 
     print(f"  {c('BOLD','[Gitleaks]')} Secret detection scan …")
-    sec_findings = stage0_secrets(src)
-    for f in sec_findings:
-        print(f"    {c('CRITICAL','● BLOCK')}  [{f.rule_id}]  line {f.line}")
-        print(f"           {c('DIM', f.snippet)}")
-        print(f"           {f.message}\n")
-    if not sec_findings:
-        print(f"    {c('PASS','✓ PASS')}  No secrets detected\n")
+    sec_findings = _safe("Stage 0", "Gitleaks", stage0_secrets, src)
+    _print_findings(sec_findings, "No secrets detected")
     all_findings.extend(sec_findings)
 
     stage0_blocked = [f for f in all_findings if f.stage == "Stage 0" and f.action == "BLOCK"]
@@ -321,24 +373,15 @@ def run_all(py_file: str, req_file: str) -> list[Finding]:
     print_banner("STAGE 1  |  SAST + SCA")
 
     print(f"\n  {c('BOLD','[Semgrep]')} Static analysis (AI insecure-defaults ruleset) …")
-    sast_findings = stage1_sast(src)
-    for f in sast_findings:
-        icon = c('CRITICAL','● BLOCK') if f.action == "BLOCK" else c('WARN','▲ WARN ')
-        print(f"    {icon}  [{f.rule_id}]  line {f.line}")
-        print(f"           {c('DIM', f.snippet)}")
-        print(f"           {f.message}\n")
-    if not sast_findings:
-        print(f"    {c('PASS','✓ PASS')}  No SAST findings\n")
+    sast_findings = _safe("Stage 1", "Semgrep", stage1_sast, src)
+    _print_findings(sast_findings, "No SAST findings")
     all_findings.extend(sast_findings)
 
     print(f"  {c('BOLD','[Trivy]')} SCA — dependency CVE scan …")
-    sca_findings = stage1_sca(req)
-    for f in sca_findings:
-        icon = c('CRITICAL','● BLOCK') if f.action == "BLOCK" else c('WARN','▲ WARN ')
-        print(f"    {icon}  [{f.rule_id}]  {f.snippet}")
-        print(f"           {f.message}\n")
-    if not sca_findings:
-        print(f"    {c('PASS','✓ PASS')}  No known CVEs in dependencies\n")
+    sca_findings = _safe("Stage 1", "Trivy", stage1_sca, req)
+    sca_pass = ("No known CVEs in dependencies" if req
+                else "No requirements file provided — SCA skipped")
+    _print_findings(sca_findings, sca_pass, by_line=False)
     all_findings.extend(sca_findings)
 
     # ── Stage 2 ───────────────────────────────────────────────────────────────
@@ -378,7 +421,7 @@ def run_all(py_file: str, req_file: str) -> list[Finding]:
         for f in all_findings
     ]
     out_path = Path(__file__).parent.parent / "pipeline-results.json"
-    out_path.write_text(json.dumps(output, indent=2))
+    out_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     print(f"  {c('DIM', f'Full results written to {out_path}')}\n")
 
     return all_findings

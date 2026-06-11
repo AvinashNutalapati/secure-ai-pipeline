@@ -23,7 +23,7 @@ import fnmatch
 import json
 from pathlib import Path
 
-from scanners.base import SEVERITIES, SEVERITY_WEIGHT
+from scanners.base import SEVERITIES, grade_of, score_from_counts
 
 POLICY_FILENAMES = (
     "secure-ai-pipeline.yml",
@@ -122,6 +122,18 @@ def parse_yaml_subset(text: str) -> dict:
                 if rest == "":
                     if pos < len(rows) and rows[pos][0] > indent:
                         result[key] = parse_block(indent + 1)
+                    elif (pos < len(rows) and rows[pos][0] == indent
+                          and rows[pos][1].startswith("- ")):
+                        # YAML allows block-list items at the SAME indent as
+                        # their key (`fail_on:\n- critical`). Consume them here;
+                        # without this branch the items would be re-read against
+                        # the parent dict and crash.
+                        items = []
+                        while (pos < len(rows) and rows[pos][0] == indent
+                               and rows[pos][1].startswith("- ")):
+                            items.append(_coerce_scalar(rows[pos][1][2:]))
+                            pos += 1
+                        result[key] = items
                     else:
                         result[key] = None
                 elif rest.startswith("["):
@@ -182,14 +194,10 @@ def _recount(findings: list[dict]) -> dict:
     return by_sev, by_cat
 
 
-def _score(by_sev: dict) -> int:
-    penalty = sum(SEVERITY_WEIGHT.get(s, 0) * n for s, n in by_sev.items())
-    return max(0, 100 - penalty)
-
-
-def _grade(score: int) -> str:
-    return ("A" if score >= 90 else "B" if score >= 75 else
-            "C" if score >= 60 else "D" if score >= 40 else "F")
+# Scoring/grading live in scanners.base so blast_radius.py and policy.py can
+# never drift apart.
+_score = score_from_counts
+_grade = grade_of
 
 
 def _excluded(file: str, patterns) -> bool:
@@ -227,7 +235,8 @@ def apply(report: dict, policy: dict) -> dict:
         kept.append(f)
 
     # MCP allowlist: any inventoried server not on the allowlist is a finding.
-    if allowed:
+    # Synthesized findings honor ignore/exclude exactly like scanner findings.
+    if allowed and "mcp-server-not-allowlisted" not in ignore:
         for f in report.get("findings", []):
             if f.get("rule_id") == "mcp-server-inventory" and not _excluded(f.get("file", ""), exclude):
                 name = f.get("title", "").split("configured:", 1)[-1].strip()
@@ -246,8 +255,18 @@ def apply(report: dict, policy: dict) -> dict:
     by_sev, by_cat = _recount(kept)
     score = _score(by_sev)
     fail_on = {s.upper() for s in (policy.get("fail_on", []) or [])}
-    triggered = sorted({f["severity"] for f in kept if f["severity"] in fail_on},
-                       key=lambda s: SEVERITIES.index(s))
+    fail_on = {s for s in fail_on if s in SEVERITIES}
+    if fail_on:
+        # fail_on is a threshold: the least-severe listed level and everything
+        # ABOVE it gate the build — `fail_on: [high]` also gates CRITICAL.
+        # (Matches the CLI --fail-on semantics; listing just [medium] can never
+        # silently exempt criticals.)
+        threshold = max(SEVERITIES.index(s) for s in fail_on)
+        triggered = sorted({f["severity"] for f in kept
+                            if SEVERITIES.index(f["severity"]) <= threshold},
+                           key=lambda s: SEVERITIES.index(s))
+    else:
+        triggered = []
 
     return {
         **report,

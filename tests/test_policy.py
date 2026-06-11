@@ -131,3 +131,41 @@ def test_apply_no_gate_when_clean():
                                   "github_actions": {}, "mcp": {}})
     assert out["policy"]["gate_failed"] is False
     assert out["score"] == 100
+
+
+def test_parse_yaml_subset_zero_indent_lists():
+    # Valid YAML: block-list items at the SAME indent as their key. This shape
+    # used to crash the fallback parser with AttributeError.
+    text = "fail_on:\n- critical\n- high\nignore:\n- abc\n"
+    d = pol.parse_yaml_subset(text)
+    assert d["fail_on"] == ["critical", "high"]
+    assert d["ignore"] == ["abc"]
+
+
+def test_fail_on_is_a_threshold():
+    # Listing only `medium` must still gate HIGH and CRITICAL findings —
+    # fail_on is "this level and above", matching the CLI --fail-on semantics.
+    findings = [
+        {"rule_id": "a", "severity": "CRITICAL", "category": "MCP",
+         "title": "x", "detail": "", "fix": "", "file": "f", "line": 0},
+    ]
+    out = pol.apply(_report(findings), {"fail_on": ["medium"], "ignore": [],
+                                        "github_actions": {}, "mcp": {}})
+    assert out["policy"]["gate_failed"] is True
+    assert out["policy"]["triggered_by"] == ["CRITICAL"]
+
+
+def test_ignore_suppresses_synthesized_allowlist_finding():
+    # An explicit ignore of mcp-server-not-allowlisted must win over the
+    # allowlist synthesis (synthesized findings honor ignore like any other).
+    findings = [
+        {"rule_id": "mcp-server-inventory", "severity": "INFO", "category": "MCP",
+         "title": "MCP server configured: sketchy", "detail": "", "fix": "",
+         "file": "mcp.json", "line": 0},
+    ]
+    policy = {"fail_on": ["high"], "ignore": ["mcp-server-not-allowlisted"],
+              "github_actions": {}, "mcp": {"allowed_servers": ["github-readonly"]}}
+    out = pol.apply(_report(findings), policy)
+    ids = {f["rule_id"] for f in out["findings"]}
+    assert "mcp-server-not-allowlisted" not in ids
+    assert out["policy"]["gate_failed"] is False

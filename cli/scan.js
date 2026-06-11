@@ -23,19 +23,37 @@ const red = (s) => color("31", s);
 const yellow = (s) => color("33", s);
 const dim = (s) => color("2", s);
 
-/** Return the first working Python interpreter, or null. */
+const MIN_PYTHON = [3, 10];
+
+/**
+ * Return `{ cmd, version, tooOld }` for the best interpreter found, preferring
+ * the first one that satisfies 3.10+, or null when none exists. Python 2 (or
+ * an old 3.x) must be rejected up front — running the scanners on it dies in a
+ * SyntaxError instead of a clear prerequisite message.
+ */
 function findPython() {
+  let fallback = null;
   for (const cmd of ["python3", "python"]) {
-    const r = spawnSync(cmd, ["--version"], { stdio: "ignore" });
-    if (!r.error && r.status === 0) return cmd;
+    const r = spawnSync(cmd, ["--version"], { encoding: "utf8" });
+    if (r.error || r.status !== 0) continue;
+    const version = `${r.stdout || ""}${r.stderr || ""}`.trim();
+    const m = /Python (\d+)\.(\d+)/.exec(version);
+    if (!m) continue;
+    const major = Number(m[1]);
+    const minor = Number(m[2]);
+    if (major > MIN_PYTHON[0] || (major === MIN_PYTHON[0] && minor >= MIN_PYTHON[1])) {
+      return { cmd, version, tooOld: false };
+    }
+    fallback = fallback || { cmd, version, tooOld: true };
   }
-  return null;
+  return fallback;
 }
 
 function runScan(args) {
   const py = findPython();
-  if (!py) {
-    console.error(red("✗ python3 not found.") + " The scanners need Python 3.10+.");
+  if (!py || py.tooOld) {
+    const found = py ? ` Found ${py.version}.` : "";
+    console.error(red("✗ Python 3.10+ not found.") + found + " The scanners need Python 3.10+.");
     console.error(dim("  Install from https://python.org or `brew install python`, then retry."));
     return 1;
   }
@@ -44,7 +62,7 @@ function runScan(args) {
     return 1;
   }
   // Pass args straight through; blast_radius.py defaults ROOT to the cwd.
-  const r = spawnSync(py, [BLAST_RADIUS, ...args], { stdio: "inherit" });
+  const r = spawnSync(py.cmd, [BLAST_RADIUS, ...args], { stdio: "inherit" });
   if (r.error) {
     console.error(red(`✗ failed to run scanner: ${r.error.message}`));
     return 1;
@@ -64,9 +82,11 @@ function runDoctor() {
   let ok = true;
 
   const py = findPython();
-  if (py) {
-    const v = spawnSync(py, ["--version"], { encoding: "utf8" });
-    ok &= check(`Python: ${(v.stdout || v.stderr || "").trim()} (${py})`, true);
+  if (py && !py.tooOld) {
+    ok &= check(`Python: ${py.version} (${py.cmd})`, true);
+  } else if (py) {
+    ok &= check(`Python 3.10+ — found only ${py.version}`, false,
+      "Install Python 3.10 or newer from https://python.org");
   } else {
     ok &= check("Python 3.10+", false, "Install from https://python.org");
   }
@@ -82,8 +102,8 @@ function runDoctor() {
   ok &= check("blast-radius scanner present", fs.existsSync(BLAST_RADIUS),
     "Reinstall the package.");
 
-  if (py && fs.existsSync(BLAST_RADIUS)) {
-    const imp = spawnSync(py, ["-c",
+  if (py && !py.tooOld && fs.existsSync(BLAST_RADIUS)) {
+    const imp = spawnSync(py.cmd, ["-c",
       `import sys; sys.path.insert(0, ${JSON.stringify(path.join(PKG_ROOT, "scripts"))}); import blast_radius`],
       { stdio: "ignore" });
     ok &= check("scanners import cleanly", !imp.error && imp.status === 0,

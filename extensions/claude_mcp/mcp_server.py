@@ -23,18 +23,14 @@ from .registry import check_package as _check_package
 
 mcp = FastMCP("secure-ai-pipeline")
 
-# A small allow-list so full_scan doesn't false-positive common real packages
-# offline. check_package does the authoritative network lookup.
-_COMMON_REAL_PACKAGES = {
-    "flask", "flask_cors", "requests", "django", "fastapi", "sqlalchemy",
-    "pydantic", "uvicorn", "gunicorn", "numpy", "pandas", "pytest", "click",
-    "httpx", "aiohttp", "boto3", "redis", "celery", "jinja2", "werkzeug",
-}
-
 
 @mcp.tool()
 def check_package(package: str, registry: Literal["pypi", "npm"] = "pypi") -> dict:
-    """Verify a package exists on PyPI or npm before importing it (anti-slopsquatting)."""
+    """Verify a package exists on PyPI or npm before importing it (anti-slopsquatting).
+
+    `exists` is tri-state: true / false (confirmed missing — do not install) /
+    null (registry unreachable — could not verify, NOT a missing verdict).
+    """
     return _check_package(package, registry)
 
 
@@ -58,30 +54,13 @@ def full_scan(
     requirements: str = "",
     language: Literal["python", "javascript"] = "python",
 ) -> dict:
-    """Run package, SAST and SCA checks together and report a blocking decision."""
-    sast_findings = rules.sast_scan(code, language)
-    sca_findings = rules.sca_scan(requirements)
+    """Run package, SAST and SCA checks together and report a blocking decision.
 
-    known = {k[0] for k in rules.KNOWN_CVES}
-    package_warnings = [
-        pkg
-        for pkg, _ver in rules.parse_requirements(requirements)
-        if pkg not in known and pkg not in _COMMON_REAL_PACKAGES
-    ]
-
-    blocked, summary = rules.summarise(sast_findings, sca_findings, package_warnings)
-    return {
-        "findings": {
-            "sast": [f.to_dict() for f in sast_findings],
-            "sca": [f.to_dict() for f in sca_findings],
-            "packages": [
-                {"package": p, "warning": "not found in known registries"}
-                for p in package_warnings
-            ],
-        },
-        "blocked": blocked,
-        "summary": summary,
-    }
+    Shared engine with the REST server (rules.full_scan): unknown pinned deps
+    get a live-registry verdict; unreachable registries warn, never block.
+    """
+    return rules.full_scan(code, requirements, language,
+                           check_registry=_check_package)
 
 
 def main() -> None:

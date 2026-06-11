@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import Finding, rel, skip
+from .base import SECRET_VALUE_PATTERNS, Finding, rel, skip
 
 # Files whose text becomes model context / agent instructions.
 PROMPT_GLOBS = [
@@ -21,15 +21,8 @@ PROMPT_GLOBS = [
     "**/.claude/*.md",
 ]
 
-SECRET_PATTERNS = [
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{16,}\b"), "GitHub token"),
-    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}\b"), "GitHub fine-grained PAT"),
-    (re.compile(r"\bsk-[A-Za-z0-9]{32,}\b"), "OpenAI API key"),
-    (re.compile(r"\bsk-(?:proj|ant-api\d+)-[A-Za-z0-9_-]{32,}\b"), "OpenAI/Anthropic API key"),
-    (re.compile(r"\bAKIA[0-9A-Z]{12,}\b"), "AWS access key id"),
-    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "Slack token"),
-    (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), "private key"),
-]
+# Shared with secrets_in_config via base so the two scanners can never drift.
+SECRET_PATTERNS = SECRET_VALUE_PATTERNS
 
 PRIVATE_IP = re.compile(
     r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
@@ -98,8 +91,11 @@ def scan(root: Path) -> list[Finding]:
                     "Remove internal IPs from rules/prompt files.",
                     where, i,
                 ))
-            m = EMAIL.search(line)
-            if m and not any(s in m.group(0).lower() for s in EMAIL_SAFE):
+            # Check every email on the line — a real address after a
+            # safe-listed example.com one must still be flagged.
+            m = next((x for x in EMAIL.finditer(line)
+                      if not any(s in x.group(0).lower() for s in EMAIL_SAFE)), None)
+            if m:
                 findings.append(Finding(
                     "prompt_privacy", "Prompt privacy", "prompt-email", "LOW",
                     "Email address in an AI rules/prompt file",

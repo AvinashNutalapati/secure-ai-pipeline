@@ -44,6 +44,11 @@ function config() {
 }
 
 function refreshDocument(doc: vscode.TextDocument): void {
+  // Real files only — git-diff twins, output channels and other virtual
+  // documents share the languageId and would double-count every finding.
+  if (doc.uri.scheme !== "file" && doc.uri.scheme !== "untitled") {
+    return;
+  }
   const { enable, severity } = config();
   if (langForDocument(doc)) {
     diagnostics.set(doc.uri, enable ? scanDocument(doc, severity) : []);
@@ -54,6 +59,26 @@ function refreshDocument(doc: vscode.TextDocument): void {
     diagnostics.set(doc.uri, enable ? scanConfig(doc).map(configToDiagnostic) : []);
     updateAggregate();
   }
+}
+
+// Debounced rescans while typing: one scan ~300ms after the last keystroke
+// instead of a full-document scan on every keypress.
+const SCAN_DEBOUNCE_MS = 300;
+const pendingScans = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleScan(doc: vscode.TextDocument): void {
+  const key = doc.uri.toString();
+  const existing = pendingScans.get(key);
+  if (existing) {
+    clearTimeout(existing);
+  }
+  pendingScans.set(
+    key,
+    setTimeout(() => {
+      pendingScans.delete(key);
+      refreshDocument(doc);
+    }, SCAN_DEBOUNCE_MS)
+  );
 }
 
 /**
@@ -159,12 +184,17 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidSaveTextDocument((doc) => refreshDocument(doc)),
     vscode.workspace.onDidOpenTextDocument((doc) => refreshDocument(doc)),
     vscode.workspace.onDidCloseTextDocument((doc) => {
+      const pending = pendingScans.get(doc.uri.toString());
+      if (pending) {
+        clearTimeout(pending);
+        pendingScans.delete(doc.uri.toString());
+      }
       diagnostics.delete(doc.uri);
       updateAggregate();
     }),
     vscode.workspace.onDidChangeTextDocument((e) => {
       if (config().runOnType) {
-        refreshDocument(e.document);
+        scheduleScan(e.document);
       }
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -179,6 +209,10 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
+  for (const timer of pendingScans.values()) {
+    clearTimeout(timer);
+  }
+  pendingScans.clear();
   if (diagnostics) {
     diagnostics.clear();
     diagnostics.dispose();

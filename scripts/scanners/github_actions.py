@@ -49,7 +49,6 @@ def scan(root: Path) -> list[Finding]:
             lines = wf.read_text(encoding="utf-8", errors="ignore").splitlines()
         except OSError:
             continue
-        text = "\n".join(lines)
 
         # pull_request_target
         for i, line in enumerate(lines, 1):
@@ -65,12 +64,23 @@ def scan(root: Path) -> list[Finding]:
                 ))
                 break
 
-        # script injection via github.event.*
+        # Script injection via github.event.* — flagged only INSIDE run: blocks.
+        # Track the block by indentation so `env:`/`with:` lines after a run
+        # step (the recommended remediation!) are never false-positived.
         in_run = False
+        run_indent = 0
         for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
             if RUN_RE.search(line):
                 in_run = True
-            if in_run and EVENT_INTERP_RE.search(line) and not line.strip().startswith("#"):
+                run_indent = line.find("run:")
+            elif in_run:
+                indent = len(line) - len(line.lstrip(" "))
+                if indent <= run_indent:
+                    in_run = False  # dedent past `run:` ends the shell block
+            if in_run and EVENT_INTERP_RE.search(line):
                 findings.append(Finding(
                     "github_actions", "CI/CD", "gha-script-injection", "HIGH",
                     "Untrusted github.event interpolation in run step",
@@ -81,7 +91,6 @@ def scan(root: Path) -> list[Finding]:
                     "script instead of interpolating directly.",
                     where, i,
                 ))
-                break
 
         # unpinned actions
         for i, line in enumerate(lines, 1):

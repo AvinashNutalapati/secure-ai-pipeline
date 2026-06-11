@@ -50,6 +50,11 @@ CASES = [
         'api_key = "sk-prod-abc123XYZ987"\n',
         'api_key = os.environ["API_KEY"]\n',
     ),
+    (
+        "eval-user-input",
+        'eval(request.args.get("x"))\n',
+        'value = ast.literal_eval(safe_text)\n',
+    ),
 ]
 
 
@@ -61,3 +66,19 @@ def test_rule_fires_on_positive(tmp_path, rule_id, positive, negative):
 @pytest.mark.parametrize("rule_id,positive,negative", CASES, ids=[c[0] for c in CASES])
 def test_rule_silent_on_negative(tmp_path, rule_id, positive, negative):
     assert rule_id not in _rule_ids(tmp_path, negative)
+
+
+def test_semgrep_yaml_has_no_anded_pattern_alternatives():
+    """Regression for the dead-rule bug: sibling `- pattern:` alternatives under
+    `patterns:` are AND'd by Semgrep and can never all match the same span —
+    alternatives must live under `pattern-either:`."""
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent.parent
+            / ".semgrep" / "ai-insecure-defaults.yml").read_text(encoding="utf-8")
+    for block in re.findall(r"patterns:\n((?:\s+- pattern:[^\n]*\n)+)", text):
+        assert block.count("- pattern:") <= 1, (
+            "AND'd pattern alternatives found (use pattern-either):\n" + block)
+    # The repaired rules must use OR semantics.
+    assert text.count("pattern-either:") >= 3

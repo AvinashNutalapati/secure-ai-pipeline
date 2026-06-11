@@ -2,7 +2,8 @@
 # Copy to your repo root as `secure-ai-pipeline.yml`. `scan` picks it up
 # automatically and uses it to gate (exit non-zero) in CI.
 
-# Severities that fail the build.
+# Gate threshold: the least-severe level listed here AND everything above it
+# fails the build (listing just `high` also gates critical findings).
 fail_on:
   - critical
   - high

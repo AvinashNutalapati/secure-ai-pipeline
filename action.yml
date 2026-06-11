@@ -28,25 +28,29 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Install dependencies
-      shell: bash
-      run: pip install requests --quiet
-
     - name: Stage 0 — Package existence check (anti-slopsquatting)
       shell: bash
       # Pass the caller's workspace explicitly: the script lives in the action's
       # own checkout (github.action_path), so it must be told which repo to scan.
-      run: python ${{ github.action_path }}/scripts/check_packages.py "$GITHUB_WORKSPACE"
+      # The action path is quoted — runner roots can contain spaces.
+      run: python "${{ github.action_path }}/scripts/check_packages.py" "$GITHUB_WORKSPACE"
 
     - name: Stage 0 — AI Agent Blast Radius (AI IDEs, Claude, MCP, Actions)
       shell: bash
       # Report-only by default; gates when the caller repo has a
       # secure-ai-pipeline.yml policy with fail_on set.
-      run: python ${{ github.action_path }}/scripts/blast_radius.py "$GITHUB_WORKSPACE" --offline --no-color
+      run: python "${{ github.action_path }}/scripts/blast_radius.py" "$GITHUB_WORKSPACE" --offline --no-color
 
     - name: Stage 0 — Secret scan (Gitleaks)
       uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
       env:
+        # Composite actions cannot read `secrets` directly. The caller's
+        # workflow must export it (and check out with fetch-depth: 0 so the
+        # FULL history is scanned, not just HEAD) — see the README quickstart:
+        #   - uses: actions/checkout@v4
+        #     with: { fetch-depth: 0 }
+        #   - uses: AvinashNutalapati/secure-ai-pipeline@v2
+        #     env:  { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
 
     - name: Stage 1 — SAST (Semgrep)
@@ -57,7 +61,7 @@ runs:
           --config p/python \
           --config p/javascript \
           --config p/security-audit \
-          --config ${{ github.action_path }}/.semgrep/ai-insecure-defaults.yml \
+          --config "${{ github.action_path }}/.semgrep/ai-insecure-defaults.yml" \
           --sarif --output semgrep.sarif
 
     - name: Upload Semgrep SARIF
@@ -70,7 +74,7 @@ runs:
       shell: bash
       env:
         FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
-      run: python ${{ github.action_path }}/scripts/sarif_gate.py semgrep.sarif --label Semgrep
+      run: python "${{ github.action_path }}/scripts/sarif_gate.py" semgrep.sarif --label Semgrep
 
     - name: Stage 1 — SCA + IaC (Trivy)
       uses: aquasecurity/trivy-action@b2933f565dbc598b29947660e66259e3c7bc8561 # v0.20.0
@@ -88,10 +92,22 @@ runs:
       with:
         sarif_file: trivy.sarif
 
+    - name: Stage 2 — Stage ZAP rules into the workspace
+      if: ${{ inputs.staging-url != '' }}
+      shell: bash
+      # The ZAP container mounts only the workspace — a file under
+      # github.action_path is invisible inside it. Copy the bundled rules in,
+      # honouring a repo-provided .zap/rules.tsv if one already exists.
+      run: |
+        if [ ! -f "$GITHUB_WORKSPACE/.zap/rules.tsv" ]; then
+          mkdir -p "$GITHUB_WORKSPACE/.zap"
+          cp "${{ github.action_path }}/.zap/rules.tsv" "$GITHUB_WORKSPACE/.zap/rules.tsv"
+        fi
+
     - name: Stage 2 — DAST (ZAP baseline)
       if: ${{ inputs.staging-url != '' }}
       uses: zaproxy/action-baseline@66042c8e7e24680119199a017e5b0e8603bf4dae # v0.12.0
       with:
         target: ${{ inputs.staging-url }}
-        rules_file_name: ${{ github.action_path }}/.zap/rules.tsv
+        rules_file_name: ".zap/rules.tsv"
         fail_action: false

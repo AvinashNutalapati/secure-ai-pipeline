@@ -14,7 +14,7 @@ repos:
         language: python
         entry: python scripts/check_packages.py
         pass_filenames: false
-        additional_dependencies: [requests]
+        # stdlib-only script — no additional dependencies needed.
 
   # ── General hygiene ─────────────────────────────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks

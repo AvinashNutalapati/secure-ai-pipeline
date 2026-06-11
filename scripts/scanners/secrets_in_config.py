@@ -13,23 +13,16 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import Finding, rel, skip
+from .base import SECRET_VALUE_PATTERNS, Finding, rel, skip
 
 CONFIG_BASENAMES = {
     "mcp.json", ".mcp.json", "claude_desktop_config.json",
 }
 CONFIG_GLOBS = ("**/.vscode/mcp.json", "**/.cursor/mcp.json", "**/.claude/*.json")
 
-# Credential-shaped values (high confidence regardless of key name).
-VALUE_PATTERNS = [
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{16,}\b"), "GitHub token"),
-    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}\b"), "GitHub fine-grained PAT"),
-    (re.compile(r"\bsk-[A-Za-z0-9]{32,}\b"), "OpenAI API key"),
-    (re.compile(r"\bsk-(?:proj|ant-api\d+)-[A-Za-z0-9_-]{32,}\b"), "OpenAI/Anthropic API key"),
-    (re.compile(r"\bAKIA[0-9A-Z]{12,}\b"), "AWS access key id"),
-    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "Slack token"),
-    (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), "private key"),
-]
+# Credential-shaped values (high confidence regardless of key name). Shared
+# with prompt_privacy via base so the two scanners can never drift.
+VALUE_PATTERNS = SECRET_VALUE_PATTERNS
 
 SECRET_KEY = re.compile(
     r"(?i)\b([A-Z0-9_]*(SECRET|TOKEN|API[_-]?KEY|ACCESS[_-]?KEY|PASSWORD|PRIVATE[_-]?KEY))\b"

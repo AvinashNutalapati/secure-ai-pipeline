@@ -80,7 +80,9 @@ def test_hallucinated_package_fails_on_404():
         assert cp.pypi_exists("flaskutils_ai") is False
 
 
-def test_network_error_treated_as_missing():
+def test_network_error_collapses_to_false_in_boolean_api():
+    # The boolean back-compat wrapper can't express tri-state; the status API
+    # reports "error" (WARN, never blocks) — see test_check_packages_v2.
     with patch.object(cp.urllib.request, "urlopen", side_effect=OSError("boom")):
         assert cp.pypi_exists("anything") is False
 

@@ -25,6 +25,11 @@ registry check (`registry.py`):
 | `sca_scan` | `{ requirements }` | `{ vulnerabilities: [{ package, version, cve, severity, fix_version }] }` |
 | `full_scan` | `{ code, requirements, language }` | `{ findings, blocked, summary }` |
 
+`exists` is **tri-state**: `true` (found), `false` (confirmed missing — a
+slopsquatting risk, do not install), or `null` (registry unreachable — could not
+verify; never treat as missing). `full_scan` only sets `blocked` for packages
+*confirmed* missing; unreachable lookups surface as warnings.
+
 ## Install
 
 ```bash
@@ -63,5 +68,7 @@ curl -X POST http://127.0.0.1:8765/check_package \
 # → {"exists": false, "latest_version": null, "warning": "...slopsquatting risk..."}
 ```
 
-To wire it into a Custom GPT, deploy this app behind a public HTTPS URL and point
-`../openai-gpt/openapi.yaml`'s `servers.url` at it.
+The production deployment lives at **https://api.mirawyn.com** (Render, see
+[`../openai-gpt/DEPLOY.md`](../openai-gpt/DEPLOY.md) and
+[`docs/domain-setup.md`](../../docs/domain-setup.md));
+`../openai-gpt/openapi.yaml` already points the Custom GPT there.

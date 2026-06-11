@@ -26,10 +26,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from scanners import SEVERITIES, SEVERITY_WEIGHT  # noqa: E402
+from scanners import SEVERITIES  # noqa: E402
 from scanners import ai_ide, claude_settings, github_actions, mcp  # noqa: E402
 from scanners import prompt_privacy, secrets_in_config  # noqa: E402
-from scanners.base import Finding  # noqa: E402
+from scanners.base import Finding, grade_of, score_from_counts  # noqa: E402
 import policy as policy_mod  # noqa: E402
 
 OFFLINE_SCANNERS = {
@@ -88,13 +88,10 @@ def package_findings(root: Path) -> list[Finding]:
 
 
 def score_of(findings: list[Finding]) -> int:
-    penalty = sum(SEVERITY_WEIGHT.get(f.severity, 0) for f in findings)
-    return max(0, 100 - penalty)
-
-
-def grade_of(score: int) -> str:
-    return ("A" if score >= 90 else "B" if score >= 75 else
-            "C" if score >= 60 else "D" if score >= 40 else "F")
+    counts: dict[str, int] = {}
+    for f in findings:
+        counts[f.severity] = counts.get(f.severity, 0) + 1
+    return score_from_counts(counts)
 
 
 def assess(root: Path, *, offline: bool = False, include=None) -> dict:
@@ -102,8 +99,17 @@ def assess(root: Path, *, offline: bool = False, include=None) -> dict:
     if not offline:
         try:
             findings.extend(package_findings(root))
-        except Exception:
-            pass
+        except Exception as exc:
+            # The flagship gate must never fail silently: surface the crash as
+            # a HIGH finding so the score drops and fail_on [high] gates.
+            findings.append(Finding(
+                "packages", "Dependency trust", "packages-scanner-error", "HIGH",
+                "Anti-slopsquatting guard failed to run",
+                f"check_packages crashed ({exc.__class__.__name__}: {exc}). "
+                "Hallucinated-package coverage is MISSING from this report.",
+                "Re-run with --offline to skip network checks, or report this as a bug.",
+                "",
+            ))
     findings.sort(key=lambda f: (_SEV_RANK.get(f.severity, 99), f.category, f.file))
 
     by_sev = {s: 0 for s in SEVERITIES}
@@ -160,9 +166,10 @@ def main(argv=None) -> int:
     parser.add_argument("--html", metavar="OUT", help="Write an HTML report.")
     parser.add_argument("--offline", action="store_true",
                         help="Skip network package checks.")
-    parser.add_argument("--fail-on", choices=["critical", "high", "medium"],
+    parser.add_argument("--fail-on", type=str.lower,
+                        choices=["critical", "high", "medium"],
                         help="Exit 1 if a finding at/above this severity exists "
-                             "(overrides the policy file's fail_on).")
+                             "(overrides the policy file's fail_on). Case-insensitive.")
     parser.add_argument("--policy", metavar="FILE", help="Path to a policy file.")
     parser.add_argument("--no-policy", action="store_true",
                         help="Ignore any secure-ai-pipeline.{yml,yaml,json}.")

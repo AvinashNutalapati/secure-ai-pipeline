@@ -74,6 +74,19 @@ def test_scan_scoped_npm_package_reduced_to_base(tmp_path, monkeypatch):
     assert seen == ["@scope/pkg"]
 
 
+def test_node_prefixed_imports_never_hit_npm(tmp_path, monkeypatch):
+    # `node:` is reserved for core modules and can't be an npm package — even
+    # newer builtins missing from NODE_BUILTINS (test, sqlite) must be skipped,
+    # not queried (a query 404s and used to hard-block valid code).
+    _w(tmp_path, "x.ts",
+       "import { test } from 'node:test'\nimport sq from 'node:sqlite'\n")
+    seen = []
+    monkeypatch.setattr(cp, "npm_status", lambda pkg, **k: seen.append(pkg) or "exists")
+    res = cp.scan(tmp_path)
+    assert seen == []
+    assert res["blocked"] == []
+
+
 def test_scan_blocks_missing_warns_on_outage(tmp_path, monkeypatch):
     _w(tmp_path, "a.py", "import realpkg\nimport fakepkg\nimport flakypkg\n")
     status = {"realpkg": "exists", "fakepkg": "missing", "flakypkg": "error"}

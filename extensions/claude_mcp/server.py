@@ -1,14 +1,15 @@
 """
-Secure AI Pipeline — MCP server.
+Secure AI Pipeline — REST server (backend for the OpenAI GPT Action).
 
-A FastAPI app exposing the pipeline's security checks as tool endpoints that
-Claude Code can call mid-session. Run it with:
+A FastAPI app exposing the pipeline's security checks as HTTP endpoints. The
+Claude Code integration is the stdio MCP server in ``mcp_server.py``. Run this
+one with:
 
     uvicorn extensions.claude_mcp.server:app --port 8765
 
 or via the installed console script:
 
-    sap-mcp
+    sap-rest
 """
 
 from __future__ import annotations
@@ -23,9 +24,9 @@ from . import rules
 from .registry import check_package as _check_package
 
 app = FastAPI(
-    title="Secure AI Pipeline MCP Server",
+    title="Secure AI Pipeline API",
     description="Security scanner for AI-generated code.",
-    version="2.0.0",
+    version="2.0.1",
 )
 
 # Optional API-key auth. Set SAP_API_KEY in the deployment environment to require
@@ -49,7 +50,9 @@ class CheckPackageRequest(BaseModel):
 
 
 class CheckPackageResponse(BaseModel):
-    exists: bool
+    # Tri-state: true = exists, false = confirmed missing (slopsquatting risk),
+    # null = registry unreachable, could not verify (NOT a missing verdict).
+    exists: Optional[bool]
     latest_version: Optional[str] = None
     warning: Optional[str] = None
 
@@ -111,40 +114,16 @@ class FullScanResponse(BaseModel):
 
 @app.post("/full_scan", response_model=FullScanResponse, dependencies=_AUTH)
 def full_scan(req: FullScanRequest) -> FullScanResponse:
-    """Run package, SAST and SCA checks together and report a blocking decision."""
-    sast_findings = rules.sast_scan(req.code, req.language)
-    sca_findings = rules.sca_scan(req.requirements)
+    """Run package, SAST and SCA checks together and report a blocking decision.
 
-    # Any pinned dep we don't recognise as real and don't have CVE data for is a
-    # slopsquatting candidate — flag it without a network call here.
-    package_warnings: list[str] = []
-    known = {k[0] for k in rules.KNOWN_CVES}
-    for pkg, _ver in rules.parse_requirements(req.requirements):
-        if pkg not in known and pkg not in _COMMON_REAL_PACKAGES:
-            package_warnings.append(pkg)
-
-    blocked, summary = rules.summarise(sast_findings, sca_findings, package_warnings)
+    The orchestration lives in rules.full_scan (shared with the stdio MCP
+    server); unknown pinned deps get a live-registry verdict so real packages
+    are never falsely reported as non-existent.
+    """
     return FullScanResponse(
-        findings={
-            "sast": [f.to_dict() for f in sast_findings],
-            "sca": [f.to_dict() for f in sca_findings],
-            "packages": [
-                {"package": p, "warning": "not found in known registries"}
-                for p in package_warnings
-            ],
-        },
-        blocked=blocked,
-        summary=summary,
+        **rules.full_scan(req.code, req.requirements, req.language,
+                          check_registry=_check_package)
     )
-
-
-# A small allow-list so full_scan doesn't false-positive common real packages
-# when offline. check_package does the authoritative network lookup.
-_COMMON_REAL_PACKAGES = {
-    "flask", "flask_cors", "requests", "django", "fastapi", "sqlalchemy",
-    "pydantic", "uvicorn", "gunicorn", "numpy", "pandas", "pytest", "click",
-    "httpx", "aiohttp", "boto3", "redis", "celery", "jinja2", "werkzeug",
-}
 
 
 @app.get("/health")
@@ -153,10 +132,12 @@ def health() -> dict:
 
 
 def main() -> None:
-    """Console-script entry point (``sap-mcp``)."""
+    """Console-script entry point (``sap-rest``)."""
     import uvicorn
 
-    uvicorn.run("extensions.claude_mcp.server:app", host="127.0.0.1", port=8765)
+    host = os.getenv("SAP_HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", os.getenv("SAP_PORT", "8765")))
+    uvicorn.run("extensions.claude_mcp.server:app", host=host, port=port)
 
 
 if __name__ == "__main__":

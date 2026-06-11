@@ -33,7 +33,7 @@ const RULES: Record<ConfigCategory, ConfigRule[]> = {
       message:
         "Long-lived credential handed to an MCP server. A malicious/compromised server can exfiltrate it — use short-lived/OAuth tokens.",
       pattern:
-        /"(GITHUB_TOKEN|AWS_[A-Z_]+|OPENAI_[A-Z_]*|ANTHROPIC_[A-Z_]*|[A-Z_]*(TOKEN|SECRET|API_?KEY|ACCESS_?KEY|PASSWORD|PRIVATE_?KEY))"\s*:/i,
+        /"(GITHUB_TOKEN|AWS_[A-Z_]+|OPENAI_[A-Z_]*|ANTHROPIC_[A-Z_]*|SLACK_[A-Z_]*|STRIPE_[A-Z_]*|[A-Z_]*(TOKEN|SECRET|API_?KEY|ACCESS_?KEY|PASSWORD|PRIVATE_?KEY))"\s*:/i,
     },
     {
       id: "mcp-shell-exec",
@@ -83,6 +83,27 @@ const RULES: Record<ConfigCategory, ConfigRule[]> = {
       message:
         "defaultMode bypasses the human approval step for agent actions. Use 'default' (prompt) mode.",
       pattern: /"defaultMode"\s*:\s*"(?:bypassPermissions|acceptEdits)"/i,
+    },
+    {
+      id: "claude-broad-network",
+      severity: "medium",
+      message:
+        "Unrestricted WebFetch/WebSearch — an exfiltration channel under prompt injection. Restrict to trusted domains.",
+      pattern: /(?:WebFetch|WebSearch)\(\s*\*?\s*\)/i,
+    },
+    {
+      id: "claude-bare-tool-allow",
+      severity: "critical",
+      message:
+        'A bare "Read"/"Edit"/"Write" allow rule approves ANY path without prompting. Scope it, e.g. Read(./**).',
+      pattern: /"\s*(?:Read|Edit|Write)\s*"\s*[,\]]/,
+    },
+    {
+      id: "claude-bare-tool-allow-exec",
+      severity: "high",
+      message:
+        'A bare "Bash"/"WebFetch"/"WebSearch" allow rule approves every command/URL. Scope it, e.g. Bash(npm test*).',
+      pattern: /"\s*(?:Bash|WebFetch|WebSearch)\s*"\s*[,\]]/,
     },
   ],
   ai_ide: [

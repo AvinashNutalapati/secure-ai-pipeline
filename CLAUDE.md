@@ -111,5 +111,6 @@ Priority order:
 - MCP server responds to `check_packages`, `sast_scan`, `sca_scan` tool calls
 - OpenAI GPT Action spec validates against the OpenAPI 3.1 linter
 - All Python scripts pass `python -m pytest tests/` with no failures
-- GitHub Action `action.yml` passes `actionlint`
+- Workflows pass `actionlint`; `action.yml` passes the structural check in ci.yml
+  (actionlint cannot lint composite-action files)
 - README has a one-paragraph summary, a 60-second quickstart, and badge links

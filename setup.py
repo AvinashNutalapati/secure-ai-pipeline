@@ -7,7 +7,10 @@ setup(
     author="AvinashNutalapati",
     license="MIT",
     url="https://github.com/AvinashNutalapati/secure-ai-pipeline",
-    packages=find_packages(),
+    # Only the extensions package ships in the wheel. scripts/ is delivered by
+    # the installer/Action; packaging it would drop an orphan `scripts.scanners`
+    # (scripts/ has no __init__.py) and squat generic top-level names.
+    packages=find_packages(include=["extensions", "extensions.*"]),
     python_requires=">=3.10",
     install_requires=["mcp>=1.2", "fastapi>=0.110", "uvicorn>=0.29", "requests>=2.31"],
     entry_points={

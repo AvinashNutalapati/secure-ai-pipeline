@@ -5,12 +5,13 @@ info:
     Security scanner for AI-generated code. Verifies package names against public
     registries (anti-slopsquatting), scans snippets for insecure defaults, and
     reports known CVEs in pinned dependencies. All operations are read-only.
-  version: 1.0.0
+  version: 2.0.1
 servers:
-  # GPT Actions require a public HTTPS host. Deploy extensions/claude_mcp/server.py
-  # (e.g. `uvicorn extensions.claude_mcp.server:app`) behind HTTPS and put its URL here.
-  - url: https://your-deployed-scanner.example.com
-    description: Replace with your deployed scanner URL.
+  # GPT Actions require a public HTTPS host. This is the Render deployment of
+  # extensions/claude_mcp/server.py behind the custom domain (see
+  # docs/domain-setup.md for the DNS records).
+  - url: https://api.mirawyn.com
+    description: Secure AI Pipeline scanner API (mirawyn.com).
 security:
   - ApiKeyAuth: []
 paths:
@@ -114,14 +115,17 @@ components:
         - exists
       properties:
         exists:
-          type: boolean
-          description: True if the package was found on the registry.
+          type: [boolean, "null"]
+          description: >-
+            Tri-state: true = exists; false = confirmed missing on the registry
+            (slopsquatting risk — do not install); null = registry unreachable,
+            could NOT be verified (not a missing verdict).
         latest_version:
           type: [string, "null"]
           description: Latest published version, when the package exists.
         warning:
           type: [string, "null"]
-          description: Slopsquatting/network warning when the package was not found.
+          description: Slopsquatting or network warning when exists is false/null.
     SastRequest:
       type: object
       required:

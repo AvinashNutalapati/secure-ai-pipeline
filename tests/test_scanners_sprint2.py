@@ -102,3 +102,21 @@ def test_prompt_privacy_reports_colocated_leaks_on_one_line(tmp_path):
        "Deploy to https://api.acme.internal from 10.2.3.4; page ops@acme.corp\n")
     ids = _ids(prompt_privacy.scan(tmp_path))
     assert {"prompt-internal-url", "prompt-private-ip", "prompt-email"} <= ids
+
+
+def test_anthropic_admin_and_svcacct_keys_flagged(tmp_path):
+    # Key shapes the old tightened sk- regexes missed.
+    _w(tmp_path, ".env",
+       "A=sk-ant-admin01-" + "a1" * 20 + "\n"
+       "B=sk-svcacct-" + "b2" * 20 + "\n")
+    crit = [f for f in secrets_in_config.scan(tmp_path)
+            if f.rule_id == "config-hardcoded-secret"]
+    assert len(crit) == 2
+
+
+def test_second_email_on_line_flagged(tmp_path):
+    # A real address after a safe-listed example.com one must still be flagged
+    # (the old code only inspected the FIRST email per line).
+    _w(tmp_path, "AGENTS.md",
+       "Contact support@example.com or escalate to ops@acme-corp.io\n")
+    assert "prompt-email" in _ids(prompt_privacy.scan(tmp_path))

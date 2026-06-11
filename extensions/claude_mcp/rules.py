@@ -53,7 +53,10 @@ SAST_RULES: list[SastRule] = [
     ),
     SastRule(
         "sql-injection-fstring", "ERROR", "BLOCK",
-        re.compile(r'\.execute\s*\(\s*f["\']|\.execute\s*\(\s*["\'].*%\s*\w|\.execute\s*\(\s*["\'].*\+\s*\w'),
+        # Operators must come AFTER the closing quote so the safe parameterised
+        # form execute("… %s", (val,)) never matches.
+        re.compile(r'\.execute\s*\(\s*f["\']'
+                   r'|\.execute\s*\(\s*["\'][^"\']*["\']\s*(?:%|\+|\.\s*format\s*\()'),
         "SQL query built via f-string/concatenation → SQL injection.",
         'Use parameters: cursor.execute("SELECT * FROM t WHERE x=?", (val,)).',
     ),
@@ -179,18 +182,26 @@ def is_blocking_sca(f: ScaFinding) -> bool:
 def summarise(
     sast: list[SastFinding],
     sca: list[ScaFinding],
-    package_warnings: Optional[list[str]] = None,
+    packages_missing: Optional[list[str]] = None,
+    *,
+    packages_unverified: int = 0,
 ) -> tuple[bool, str]:
-    """Return (blocked, human_readable_summary)."""
-    package_warnings = package_warnings or []
+    """Return (blocked, human_readable_summary).
+
+    Only packages CONFIRMED missing on a registry block; unverified ones
+    (offline / no registry checker) are reported as warnings.
+    """
+    packages_missing = packages_missing or []
     blocking = (
         [f for f in sast if is_blocking_sast(f)]
         + [f for f in sca if is_blocking_sca(f)]  # type: ignore[list-item]
     )
-    blocked = bool(blocking) or bool(package_warnings)
+    blocked = bool(blocking) or bool(packages_missing)
     parts: list[str] = []
-    if package_warnings:
-        parts.append(f"{len(package_warnings)} non-existent package(s)")
+    if packages_missing:
+        parts.append(f"{len(packages_missing)} non-existent package(s)")
+    if packages_unverified:
+        parts.append(f"{packages_unverified} unverified package(s)")
     n_sast_block = sum(1 for f in sast if is_blocking_sast(f))
     n_sast_warn = len(sast) - n_sast_block
     if n_sast_block:
@@ -204,3 +215,78 @@ def summarise(
         return False, "No security findings — safe to proceed."
     verb = "BLOCKED" if blocked else "OK with warnings"
     return blocked, f"{verb}: " + ", ".join(parts) + "."
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# full_scan — the one orchestration both servers expose (REST + stdio MCP)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Offline fast-path of common real packages; anything else is verified against
+# the live registry when a checker is supplied, and reported as "unverified"
+# (warning, never blocking) when it isn't.
+_COMMON_REAL_PACKAGES = {
+    "flask", "flask_cors", "requests", "django", "fastapi", "sqlalchemy",
+    "pydantic", "uvicorn", "gunicorn", "numpy", "pandas", "pytest", "click",
+    "httpx", "aiohttp", "boto3", "redis", "celery", "jinja2", "werkzeug",
+}
+
+
+def full_scan(
+    code: str = "",
+    requirements: str = "",
+    language: str = "python",
+    check_registry=None,
+) -> dict:
+    """Run package, SAST and SCA checks together with one blocking decision.
+
+    ``check_registry`` is an optional callable ``(package, registry) -> dict``
+    (see registry.check_package). With it, unknown pinned deps get an
+    authoritative live-registry verdict: confirmed-missing blocks, unreachable
+    warns. Without it, unknown deps warn as "unverified" — a 20-name allowlist
+    is not grounds to declare a real package non-existent.
+    """
+    sast_findings = sast_scan(code, language)
+    sca_findings = sca_scan(requirements)
+
+    known = {k[0] for k in KNOWN_CVES} | _COMMON_REAL_PACKAGES
+    missing: list[str] = []
+    unverified: list[dict] = []
+    for pkg, _ver in parse_requirements(requirements):
+        if pkg in known:
+            continue
+        if check_registry is not None:
+            try:
+                res = check_registry(pkg, "pypi")
+            except Exception as exc:  # a checker crash must not kill the scan
+                res = {"exists": None, "warning": f"registry check failed: {exc}"}
+            if res.get("exists") is True:
+                continue
+            if res.get("exists") is False:
+                missing.append(pkg)
+            else:
+                unverified.append({
+                    "package": pkg,
+                    "warning": res.get("warning") or "registry unreachable — could not verify",
+                })
+        else:
+            unverified.append({
+                "package": pkg,
+                "warning": "not in the offline known-package list — verify with check_package",
+            })
+
+    blocked, summary = summarise(
+        sast_findings, sca_findings, missing, packages_unverified=len(unverified)
+    )
+    return {
+        "findings": {
+            "sast": [f.to_dict() for f in sast_findings],
+            "sca": [f.to_dict() for f in sca_findings],
+            "packages": (
+                [{"package": p, "warning": "not found on the registry — slopsquatting risk"}
+                 for p in missing]
+                + unverified
+            ),
+        },
+        "blocked": blocked,
+        "summary": summary,
+    }

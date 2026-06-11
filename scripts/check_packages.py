@@ -37,6 +37,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # ── Stdlib packages that are never on PyPI ──────────────────────────────────
@@ -62,6 +63,8 @@ PYTHON_STDLIB = {
     "statistics", "secrets", "token", "tokenize", "keyword", "dis",
     "marshal", "compileall", "py_compile", "zipimport", "pkgutil",
     "modulefinder", "runpy", "site", "sysconfig", "venv", "ensurepip",
+    "shlex", "operator", "errno", "locale", "unicodedata", "pprint",
+    "atexit", "ipaddress", "zoneinfo", "graphlib", "sched", "wave",
 }
 
 # ── Import name → PyPI distribution name (common mismatches) ─────────────────
@@ -191,7 +194,6 @@ _STATUS_CACHE: dict[tuple[str, str], str] = {}
 
 
 def _query(url: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
-    last_was_error = False
     for i in range(attempts):
         try:
             with urllib.request.urlopen(url, timeout=10) as resp:
@@ -199,12 +201,16 @@ def _query(url: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 return "missing"
-            last_was_error = True   # 5xx / rate limit → retry
-        except (urllib.error.URLError, OSError):
-            last_was_error = True
+            # 5xx / rate limit → retry
+        except (urllib.error.URLError, OSError, ValueError):
+            # ValueError covers http.client.InvalidURL from malformed import
+            # names — report "error" (WARN), never crash the gate.
+            pass
         if i < attempts - 1 and backoff:
             time.sleep(backoff * (i + 1))
-    return "error" if last_was_error else "missing"
+    # Only confirmed 404s return "missing" above; anything else after all
+    # attempts is a registry problem, which must WARN rather than hard-block.
+    return "error"
 
 
 def pypi_status(pkg: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
@@ -254,6 +260,11 @@ def scan(root: Path) -> dict:
         else:
             ok.append(dist_name)
 
+    # Collect every (import, distribution, registry, file) first, then resolve
+    # the unique lookups concurrently — one HTTP probe per unique package
+    # instead of a serial walk.
+    pending: list[tuple[str, str, str, Path]] = []
+
     # Python
     for py in root.rglob("*.py"):
         if _skip(py):
@@ -262,7 +273,7 @@ def scan(root: Path) -> dict:
             if name in first_party:
                 continue
             dist = IMPORT_TO_PYPI.get(name, name)
-            record(name, dist, pypi_status(dist), "pypi", py)
+            pending.append((name, dist, "pypi", py))
 
     # JS / TS — one rglob per extension (brace globs do NOT expand in rglob).
     for pattern in JS_GLOBS:
@@ -270,10 +281,26 @@ def scan(root: Path) -> dict:
             if _skip(js):
                 continue
             for name in extract_js_imports(js):
-                base = name[5:] if name.startswith("node:") else name
-                if base in first_party or base in NODE_BUILTINS or base in HOST_MODULES:
+                if name.startswith("node:"):
+                    # The `node:` prefix is reserved for Node core modules and
+                    # can never resolve to an npm package — nothing to verify.
                     continue
-                record(name, name, npm_status(name), "npm", js)
+                if name in first_party or name in NODE_BUILTINS or name in HOST_MODULES:
+                    continue
+                pending.append((name, name, "npm", js))
+
+    unique = {(reg, dist) for _, dist, reg, _ in pending}
+    statuses: dict[tuple[str, str], str] = {}
+    if unique:
+        def resolve(item: tuple[str, str]) -> tuple[tuple[str, str], str]:
+            reg, dist = item
+            return item, (pypi_status(dist) if reg == "pypi" else npm_status(dist))
+
+        with ThreadPoolExecutor(max_workers=min(8, len(unique))) as pool:
+            statuses = dict(pool.map(resolve, sorted(unique)))
+
+    for import_name, dist, reg, where in pending:
+        record(import_name, dist, statuses[(reg, dist)], reg, where)
 
     return {"blocked": blocked, "warnings": warnings, "ok": sorted(set(ok))}
 
@@ -295,8 +322,11 @@ def main(argv=None) -> int:
     for w in result["warnings"]:
         print(f"  [WARN] {w['registry']} unreachable for '{w['package']}' ({w['file']})")
     for b in result["blocked"]:
+        # Precomputed (not a nested f-string): same-quote nesting needs PEP 701,
+        # which is Python 3.12+ — this file must run on 3.10.
+        imported_as = f" (imported as {b['import']})" if b["import"] != b["package"] else ""
         print(f"  [FAIL] {b['registry']} package not found: '{b['package']}'"
-              f"{f' (imported as {b['import']})' if b['import'] != b['package'] else ''}  ({b['file']})")
+              f"{imported_as}  ({b['file']})")
 
     if args.json:
         Path(args.json).write_text(json.dumps(result, indent=2), encoding="utf-8")

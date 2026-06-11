@@ -36,13 +36,14 @@ def _level_for(result, rules_by_id):
 
 def _is_suppressed(result) -> bool:
     """True if a SARIF result is effectively suppressed (e.g. an inline
-    `nosemgrep`). A suppression applies unless its status is `rejected`; an
-    absent status means `accepted` per the SARIF spec. A result whose only
-    suppressions are `rejected` still gates the build (fail-closed)."""
+    `nosemgrep`). Per SARIF semantics a suppression only takes effect once it
+    is `accepted` (an absent status means accepted). `underReview` and
+    `rejected` suppressions do NOT suppress — the finding still gates the
+    build (fail-closed)."""
     suppressions = result.get("suppressions")
     if not suppressions:
         return False
-    return any((s or {}).get("status", "accepted") != "rejected" for s in suppressions)
+    return any((s or {}).get("status", "accepted") == "accepted" for s in suppressions)
 
 
 def main(argv=None):
@@ -54,9 +55,12 @@ def main(argv=None):
     fail_on_warnings = os.environ.get("FAIL_ON_WARNINGS", "false").strip().lower() in TRUTHY
 
     if not os.path.exists(args.sarif):
-        # No SARIF means the scanner produced nothing to gate on; treat as clean.
-        print(f"  [{args.label}] no SARIF file at '{args.sarif}' — nothing to gate.")
-        return 0
+        # Fail closed: a missing SARIF means the scanner never ran or wrote to
+        # a different path. Exiting 0 here would silently disable the gate.
+        print(f"  [FAIL] no SARIF file at '{args.sarif}' — scanner output is "
+              "missing, failing closed. (Did the scan step crash, or write to "
+              "a different path?)")
+        return 1
 
     try:
         with open(args.sarif, encoding="utf-8") as fh:
@@ -72,9 +76,9 @@ def main(argv=None):
             for r in run.get("tool", {}).get("driver", {}).get("rules", [])
         }
         for result in run.get("results", []):
-            # Honor SARIF suppressions (e.g. a `nosemgrep` inline comment) — a
-            # suppressed result must not gate the build. A `rejected` suppression
-            # does NOT suppress, so it still gates (fail-closed).
+            # Honor accepted SARIF suppressions (e.g. an inline `nosemgrep`).
+            # `underReview`/`rejected` suppressions do NOT suppress — those
+            # results still gate (fail-closed).
             if _is_suppressed(result):
                 continue
             level = _level_for(result, rules_by_id)

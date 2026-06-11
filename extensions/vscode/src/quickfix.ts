@@ -49,9 +49,12 @@ export class SecurityQuickFixProvider implements vscode.CodeActionProvider {
     action.edit = new vscode.WorkspaceEdit();
     action.edit.replace(document.uri, diag.range, fix.replacement);
 
-    // Insert a required import at the top of the file if it isn't already there.
+    // Insert a required import if it isn't already there — after the shebang,
+    // encoding comment, module docstring, and any `from __future__` imports
+    // (inserting at 0,0 would corrupt those files).
     if (fix.ensureImport && !this.hasImport(document, fix.ensureImport)) {
-      action.edit.insert(document.uri, new vscode.Position(0, 0), `${fix.ensureImport}\n`);
+      const line = this.importInsertLine(document);
+      action.edit.insert(document.uri, new vscode.Position(line, 0), `${fix.ensureImport}\n`);
     }
     return action;
   }
@@ -64,5 +67,44 @@ export class SecurityQuickFixProvider implements vscode.CodeActionProvider {
       }
     }
     return false;
+  }
+
+  /** First line where an import can legally be inserted. */
+  private importInsertLine(document: vscode.TextDocument): number {
+    let line = 0;
+    const headerMax = Math.min(document.lineCount, 50);
+
+    // Shebang and PEP 263 encoding comments.
+    while (line < headerMax && /^#(?:!|.*coding[:=])/.test(document.lineAt(line).text)) {
+      line++;
+    }
+
+    // Module docstring (''' or """, possibly multi-line).
+    if (line < headerMax) {
+      const text = document.lineAt(line).text.trimStart();
+      const open = /^[rubf]*("""|''')/i.exec(text);
+      if (open) {
+        const quote = open[1];
+        const afterOpen = text.slice(text.indexOf(quote) + quote.length);
+        if (!afterOpen.includes(quote)) {
+          line++;
+          while (line < document.lineCount && !document.lineAt(line).text.includes(quote)) {
+            line++;
+          }
+        }
+        line = Math.min(line + 1, document.lineCount);
+      }
+    }
+
+    // Blank lines and `from __future__` imports directly after the header.
+    while (line < document.lineCount) {
+      const t = document.lineAt(line).text.trim();
+      if (t === "" || t.startsWith("from __future__ import")) {
+        line++;
+      } else {
+        break;
+      }
+    }
+    return line;
   }
 }

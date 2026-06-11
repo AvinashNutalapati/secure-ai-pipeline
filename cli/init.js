@@ -20,6 +20,18 @@ const { spawnSync } = require("child_process");
 const PKG_ROOT = path.join(__dirname, "..");
 const TARGET = process.cwd();
 
+// Every bundled scanner module is discovered at runtime — no hand-maintained
+// list that can drift from the package contents and break installed pipelines.
+function scannerFiles() {
+  const dir = path.join(PKG_ROOT, "scripts", "scanners");
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".py"))
+    .sort()
+    .map((f) => path.join("scripts", "scanners", f));
+}
+
 // Files to copy, relative to both the package root and the target repo.
 const FILES_TO_COPY = [
   path.join(".github", "workflows", "security.yml"),
@@ -30,14 +42,7 @@ const FILES_TO_COPY = [
   path.join("scripts", "blast_radius.py"),
   path.join("scripts", "report.py"),
   path.join("scripts", "policy.py"),
-  path.join("scripts", "scanners", "__init__.py"),
-  path.join("scripts", "scanners", "base.py"),
-  path.join("scripts", "scanners", "ai_ide.py"),
-  path.join("scripts", "scanners", "claude_settings.py"),
-  path.join("scripts", "scanners", "mcp.py"),
-  path.join("scripts", "scanners", "github_actions.py"),
-  path.join("scripts", "scanners", "prompt_privacy.py"),
-  path.join("scripts", "scanners", "secrets_in_config.py"),
+  ...scannerFiles(),
   path.join(".semgrep", "ai-insecure-defaults.yml"),
   path.join(".zap", "rules.tsv"),
   ".pre-commit-config.yaml",
@@ -159,7 +164,8 @@ Commands:
                    --html FILE   write an HTML report
                    --json FILE   write a JSON report
                    --offline     skip network package checks
-                   --fail-on L   exit non-zero on CRITICAL|HIGH|MEDIUM findings
+                   --fail-on L   exit non-zero at/above severity L
+                                 (critical | high | medium — case-insensitive)
   init           Install the CI pipeline + hooks into the current repo (idempotent)
   doctor         Check that prerequisites (python3, git) are available
   help           Show this help`);

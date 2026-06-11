@@ -91,8 +91,8 @@ export const RULES: SecurityRule[] = [
     message:
       "Hardcoded credential in source. Load it from the environment (os.environ[...]) or a secrets manager.",
     trigger:
-      /\b(api_key|secret|password|passwd|token|auth_key|access_key)\s*=\s*["'][^"']{4,}["']/i,
-    target: /["'][^"']{4,}["']/,
+      /\b(api_key|secret|password|passwd|token|auth_key|access_key)\s*=\s*["'][^"']{8,}["']/i,
+    target: /["'][^"']{8,}["']/,
     languages: ["python", "javascript"],
     fix: (_targetText: string, lang: Lang) => ({
       title: "Load from environment variable",
@@ -102,9 +102,20 @@ export const RULES: SecurityRule[] = [
       ensureImport: lang === "python" ? "import os" : undefined,
     }),
   },
+  {
+    id: "eval-user-input",
+    severity: "error",
+    message:
+      "eval/exec on request data allows arbitrary code execution. Remove it or use a safe parser.",
+    trigger: /\b(?:eval|exec)\s*\(\s*request\./,
+    languages: ["python"],
+  },
 ];
 
-const VALUE_PLACEHOLDERS = ["example", "placeholder", "changeme", "your_", "<", ">"];
+// A value is a placeholder only when the WHOLE value matches (mirrors
+// run_pipeline.py): a real key merely containing "example" must still flag.
+const VALUE_PLACEHOLDER_RE =
+  /^(?:x{4,}|\*{3,}|\.{3,}|<[^<>]{0,60}>|changeme|change[-_]me|placeholder|dummy|redacted|todo|tbd|none|null|example(?:[-_](?:api[-_]?key|key|token|secret|value|password))?|sample(?:[-_](?:api[-_]?key|key|token|secret|value))?|your[-_][a-z_-]{0,40})$/i;
 
 export function langForDocument(doc: vscode.TextDocument): Lang | undefined {
   switch (doc.languageId) {
@@ -155,22 +166,25 @@ export function scanDocument(
       if (severityRank(rule.severity) < minRank) {
         continue;
       }
-      if (!rule.trigger.test(lineText)) {
+      const trig = rule.trigger.exec(lineText);
+      if (!trig) {
         continue;
       }
 
-      // Determine the precise range to underline.
+      // Underline the target WITHIN the trigger match — searching from
+      // column 0 could select an innocent earlier substring (e.g. a URL
+      // before the real secret) and make the quick fix edit the wrong code.
       const targetRe = rule.target ?? rule.trigger;
-      const m = targetRe.exec(lineText);
-      let startCol = 0;
-      let endCol = lineText.length;
+      const m = targetRe.exec(lineText.slice(trig.index));
+      let startCol = trig.index;
+      let endCol = trig.index + trig[0].length;
       if (m) {
-        startCol = m.index;
-        endCol = m.index + m[0].length;
-        // Skip obvious non-secret placeholder values.
+        startCol = trig.index + m.index;
+        endCol = startCol + m[0].length;
+        // Skip values that are entirely placeholders.
         if (rule.id === "hardcoded-api-key") {
-          const lower = m[0].toLowerCase();
-          if (VALUE_PLACEHOLDERS.some((p) => lower.includes(p))) {
+          const inner = m[0].replace(/^["']|["']$/g, "");
+          if (VALUE_PLACEHOLDER_RE.test(inner)) {
             continue;
           }
         }

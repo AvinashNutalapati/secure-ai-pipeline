@@ -27,6 +27,26 @@ jobs:
       - name: Run pytest
         run: python -m pytest tests/ -v
 
+      # actionlint can't validate a composite action's schema, so do a direct
+      # structural check — a malformed action.yml breaks every marketplace
+      # consumer at `uses:` time.
+      - name: Validate action.yml structure
+        run: |
+          pip install pyyaml --quiet
+          python - <<'EOF'
+          import yaml
+          d = yaml.safe_load(open("action.yml"))
+          assert d.get("name"), "action.yml: missing name"
+          assert d.get("runs", {}).get("using") == "composite", "action.yml: runs.using must be composite"
+          steps = d["runs"].get("steps") or []
+          assert steps, "action.yml: no steps"
+          for i, s in enumerate(steps):
+              assert "uses" in s or "run" in s, f"action.yml: step {i} has neither uses nor run"
+              if "run" in s:
+                  assert s.get("shell"), f"action.yml: step {i} ({s.get('name')}) needs an explicit shell"
+          print(f"action.yml OK: {len(steps)} steps")
+          EOF
+
   actionlint:
     name: "✅ Lint workflows"
     runs-on: ubuntu-latest

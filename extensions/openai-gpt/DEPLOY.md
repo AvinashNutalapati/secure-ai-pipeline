@@ -34,9 +34,25 @@ docker run -p 8765:8765 -e SAP_API_KEY="$(openssl rand -hex 24)" sap-scanner
 Then in the Custom GPT Action, choose **Authentication → API Key → Custom header
 `X-API-Key`** and paste the same value (the spec already declares this scheme).
 
+## Custom domain — api.mirawyn.com
+
+[`render.yaml`](../../render.yaml) pins `domains: [api.mirawyn.com]`, so Render
+requests the TLS certificate automatically once DNS resolves:
+
+1. Render → the service → **Settings → Custom Domains** shows the exact CNAME
+   target (e.g. `secure-ai-pipeline-scanner.onrender.com`).
+2. In Squarespace (DNS for mirawyn.com): **Settings → Domains → mirawyn.com →
+   DNS Settings → Add record** — Type `CNAME`, Host `api`, Data = the Render
+   target from step 1. (Full walkthrough: [`docs/domain-setup.md`](../../docs/domain-setup.md).)
+3. After propagation, `https://api.mirawyn.com/health` → `{"status":"ok",...}`.
+
+Until the CNAME exists, the service still answers on its `*.onrender.com` URL —
+point `servers[0].url` there temporarily if you want to test the GPT first.
+
 ## Wire it into the Custom GPT
 
-1. Edit [`openapi.yaml`](openapi.yaml) → set `servers[0].url` to your deployed HTTPS URL.
+1. [`openapi.yaml`](openapi.yaml) already points `servers[0].url` at
+   `https://api.mirawyn.com`.
 2. In ChatGPT → **Create a GPT → Configure → Actions → Create new action**, paste the
    contents of `openapi.yaml`.
 3. Paste [`GPT_INSTRUCTIONS.md`](GPT_INSTRUCTIONS.md) into the GPT's **Instructions** box.

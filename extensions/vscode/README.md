@@ -15,6 +15,7 @@ runs locally and works in [Cursor](https://cursor.com) (VS Code-compatible).
 | `subprocess-shell-true` | Error | `shell=True` → `shell=False` |
 | `sql-injection-fstring` | Error | — (use parameterised queries) |
 | `hardcoded-api-key` | Error | → `os.environ[...]` (Python) / `process.env.*` (JS/TS) |
+| `eval-user-input` | Error | — (remove `eval`/`exec` on request data) |
 
 ## AI-workflow diagnostics (new in 2.0)
 
@@ -23,7 +24,7 @@ Open or scan these and findings appear inline + in the Problems panel:
 | File | Catches |
 |------|---------|
 | `mcp.json`, `.mcp.json`, `.vscode/mcp.json`, `claude_desktop_config.json` | secrets to servers, `bash`/`curl\|bash` startup, broad `/` mounts, unauth `http` remotes |
-| `.claude/settings*.json` | home/root reads, wildcard `Bash(*)`, `rm -rf`, `bypassPermissions` |
+| `.claude/settings*.json` | home/root reads, bare `"Bash"`/`"Read"` allows, wildcard `Bash(*)`, `rm -rf`, `bypassPermissions`, unrestricted WebFetch |
 | `.cursorrules`, `.clinerules`, `.windsurfrules`, `copilot-instructions.md` | auto-run, fetch-execute, prompt-injection overrides |
 | `.github/workflows/*.yml` | unpinned actions, `pull_request_target`, `github.event` injection |
 
@@ -44,7 +45,7 @@ workspace-wide score (0–100).
 |---------|---------|-------------|
 | `securePipeline.enable` | `true` | Toggle the extension on/off. |
 | `securePipeline.severity` | `"warning"` | Minimum severity to show (`"error"` or `"warning"`). |
-| `securePipeline.runOnType` | `false` | Run checks while typing, not just on save. |
+| `securePipeline.runOnType` | `false` | Run checks while typing (debounced ~300 ms), not just on save. |
 
 ## Develop / build
 

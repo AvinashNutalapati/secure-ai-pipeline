@@ -16,9 +16,9 @@ rules:
 
   # ── Flask debug mode enabled ───────────────────────────────────────────────
   - id: flask-debug-true
-    patterns:
-      - pattern: app.run(..., debug=True, ...)
-      - pattern: app.run(debug=True)
+    # `...` matches any other arguments, including none — covers both
+    # app.run(debug=True) and app.run(host="0.0.0.0", port=5000, debug=True).
+    pattern: app.run(..., debug=True, ...)
     message: >
       Flask debug mode is enabled. This exposes an interactive debugger and
       allows arbitrary code execution. Never enable debug=True in production.
@@ -31,7 +31,9 @@ rules:
 
   # ── Wildcard CORS ──────────────────────────────────────────────────────────
   - id: wildcard-cors
-    patterns:
+    # Alternatives must be OR'd (pattern-either); under `patterns:` they would
+    # be AND'd and the rule could never fire.
+    pattern-either:
       - pattern: 'CORS($APP, resources={r"/*": {"origins": "*"}})'
       - pattern: CORS($APP, origins="*")
       - pattern: response.headers["Access-Control-Allow-Origin"] = "*"
@@ -66,11 +68,13 @@ rules:
 
   # ── SQL injection via string formatting ───────────────────────────────────
   - id: sql-injection-fstring
-    patterns:
+    pattern-either:
       - pattern: $CURSOR.execute(f"...{$VAR}...")
       - pattern: $CURSOR.execute("..." % $VAR)
+      - pattern: $CURSOR.execute("..." % (...))
       - pattern: $CURSOR.execute("..." + $VAR)
       - pattern: $CURSOR.execute("..." + $VAR + "...")
+      - pattern: $CURSOR.execute("...".format(...))
     message: >
       SQL query built by string concatenation or f-string. Use parameterised
       queries (cursor.execute(sql, (param,))) to prevent SQL injection.
@@ -97,7 +101,7 @@ rules:
 
   # ── eval / exec on external input ─────────────────────────────────────────
   - id: eval-user-input
-    patterns:
+    pattern-either:
       - pattern: eval(request.$METHOD(...))
       - pattern: exec(request.$METHOD(...))
     message: >

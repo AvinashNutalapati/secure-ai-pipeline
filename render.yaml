@@ -1,6 +1,8 @@
 # Render Blueprint — deploys the REST scanner that backs the OpenAI GPT Action.
-# Render auto-detects this file at the repo root. After the first deploy, copy the
-# service URL into extensions/openai-gpt/openapi.yaml -> servers[0].url.
+# Render auto-detects this file at the repo root. The public hostname is
+# api.mirawyn.com (openapi.yaml points there); until the DNS CNAME is added in
+# Squarespace (see docs/domain-setup.md), the service also answers on its
+# *.onrender.com URL.
 services:
   - type: web
     name: secure-ai-pipeline-scanner
@@ -9,3 +11,5 @@ services:
     plan: free
     healthCheckPath: /health
     autoDeploy: true
+    domains:
+      - api.mirawyn.com

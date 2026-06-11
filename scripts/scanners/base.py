@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -20,6 +21,34 @@ SKIP_DIRS = {
     ".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build",
     ".tox", ".mypy_cache", ".pytest_cache", "site-packages", ".next", "out",
 }
+
+
+def score_from_counts(by_severity: dict) -> int:
+    """0–100 blast-radius score from severity counts. Single source of truth —
+    blast_radius.py and policy.py must never diverge on scoring."""
+    penalty = sum(SEVERITY_WEIGHT.get(s, 0) * n for s, n in (by_severity or {}).items())
+    return max(0, 100 - penalty)
+
+
+def grade_of(score: int) -> str:
+    return ("A" if score >= 90 else "B" if score >= 75 else
+            "C" if score >= 60 else "D" if score >= 40 else "F")
+
+
+# Credential-shaped value patterns shared by the secrets_in_config and
+# prompt_privacy scanners (one list — additions propagate to both).
+# The sk- patterns cover classic (sk-<32+>), project (sk-proj-…), Anthropic
+# API/admin (sk-ant-api03-…, sk-ant-admin01-…) and OpenAI service-account
+# (sk-svcacct-…) key shapes.
+SECRET_VALUE_PATTERNS = [
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{16,}\b"), "GitHub token"),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}\b"), "GitHub fine-grained PAT"),
+    (re.compile(r"\bsk-[A-Za-z0-9]{32,}\b"), "OpenAI API key"),
+    (re.compile(r"\bsk-(?:[a-z]+\d*-)+[A-Za-z0-9_-]{24,}\b"), "OpenAI/Anthropic API key"),
+    (re.compile(r"\bAKIA[0-9A-Z]{12,}\b"), "AWS access key id"),
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"), "Slack token"),
+    (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"), "private key"),
+]
 
 
 @dataclass

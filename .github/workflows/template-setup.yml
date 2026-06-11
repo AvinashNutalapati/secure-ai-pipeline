@@ -30,8 +30,10 @@ jobs:
           if [ -f .github/TEMPLATE_README.md ]; then
             mv .github/TEMPLATE_README.md README.md
           fi
-          # Replace placeholders with the new repo's owner and name.
-          sed -i "s/GITHUB_USER/${OWNER}/g; s/REPO_NAME/${REPO}/g; s/AvinashNutalapati/${OWNER}/g" README.md
+          # Replace placeholders with the new repo's owner and name. Only the
+          # explicit placeholders are rewritten — the marketplace `uses:` line
+          # must keep its real owner or it would point at a nonexistent action.
+          sed -i "s/GITHUB_USER/${OWNER}/g; s/REPO_NAME/${REPO}/g" README.md
 
       - name: Remove this workflow so it only runs once
         run: |
@@ -59,8 +61,8 @@ jobs:
             --body "$(cat <<'EOF'
           Your security pipeline is wired and running. A few optional steps to finish setup:
 
-          - [ ] Set \`STAGING_URL\` in repo Settings → Secrets and variables → Actions → Variables (enables DAST)
-          - [ ] Install pre-commit locally: \`pip install pre-commit && pre-commit install\`
+          - [ ] Set `STAGING_URL` in repo Settings → Secrets and variables → Actions → Variables (enables DAST)
+          - [ ] Install pre-commit locally: `pip install pre-commit && pre-commit install`
           - [ ] Push a test commit to see the pipeline run
           - [ ] (Optional) Install the VS Code extension: search "Secure AI Pipeline" in the Extensions panel
 
