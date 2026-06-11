@@ -131,8 +131,8 @@ runs:
       run: |
         python "${{ github.action_path }}/scripts/job_summary.py" \
           --scan secrets "Secrets (Gitleaks)" results.sarif \
-          --scan sca "Dependencies (Trivy SCA)" trivy.sarif \
-          --scan sast "SAST (Semgrep)" semgrep.sarif
+          --scan sast "SAST (Semgrep)" semgrep.sarif \
+          --scan sca "Dependencies (Trivy SCA)" trivy.sarif
 
     - name: Stage 2 — Stage ZAP rules into the workspace
       if: ${{ inputs.staging-url != '' }}

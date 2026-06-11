@@ -144,18 +144,22 @@ def build(scans):
                       f"| `{_esc(loc)}` | {_esc(fix)} |")
             lines.append(f"- [{f['level'].upper()}] {title}  ({loc}) — fix: {fix}")
         md += ["",
-               f"<details><summary>🤖 Copy the fix prompt for {label}</summary>", "",
+               f"<details><summary>🤖 Fix prompt — {label} (click to copy)</summary>", "",
                "```text", _prompt(scan_type, label, lines), "```", "", "</details>", ""]
         combined.append((label, lines))
 
+    # Combined prompt is a dropdown too (same as the per-type ones) so it's never
+    # a loose visible block that reads as belonging to the section above it.
     if any_findings:
         overall = ["You are a senior application-security engineer working in this repository.",
                    "Task: fix ALL the security findings below, grouped by type.", "",
                    "Rules:", *_RULES, ""]
         for label, lines in combined:
             overall += [f"## {label}", *lines, ""]
-        md += ["---", "## 🤖 Fix everything — one prompt", "",
-               "```text", "\n".join(overall).rstrip(), "```"]
+        md += ["---",
+               "<details><summary>🤖 <b>Fix everything</b> — one combined prompt for all "
+               "findings (click to copy)</summary>", "",
+               "```text", "\n".join(overall).rstrip(), "```", "", "</details>"]
     else:
         md.append("✅ **All clear** — no findings to fix.")
 

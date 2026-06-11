@@ -71,16 +71,30 @@ def test_build_has_tables_prompts_and_fix_versions(tmp_path):
     # SCA table with the fixed version as the suggested fix.
     assert "Dependencies (Trivy SCA) — ⚠️ 1 finding" in md
     assert "Upgrade lodash to 4.17.21." in md
-    # Per-type prompt + combined prompt, both copy-paste code blocks.
-    assert "Copy the fix prompt for Dependencies (Trivy SCA)" in md
-    assert "## 🤖 Fix everything — one prompt" in md
-    assert md.count("```text") >= 2
+    # Per-type prompt + combined prompt, both collapsible copy-paste code blocks.
+    assert "Fix prompt — Dependencies (Trivy SCA)" in md
+    assert "Fix everything" in md
+    assert md.count("```text") == 2          # one per-type + one combined
+    assert md.count("<details>") == 2        # both prompts are dropdowns
+
+
+def test_clean_type_gets_no_prompt(tmp_path):
+    # A scan type with no findings must NOT get a fix prompt (regression: SAST
+    # with zero findings used to look like it had a copy of the SCA prompt).
+    sast = _w(tmp_path, "semgrep.sarif", _sarif([]))
+    sca = _w(tmp_path, "trivy.sarif", _sarif([_result("CVE-1", "error", "Fixed Version: 1.2")]))
+    md, _ = js.build([("sast", "SAST (Semgrep)", sast),
+                     ("sca", "Dependencies (Trivy SCA)", sca)])
+    assert "SAST (Semgrep) — ✅ no findings" in md
+    assert "Fix prompt — SAST" not in md                 # no SAST prompt
+    assert md.count("Fix prompt —") == 1                 # only the SCA one
 
 
 def test_build_all_clear():
     md, _ = js.build([("secrets", "Secrets", None)])
     assert "All clear" in md
     assert "Fix everything" not in md
+    assert "Fix prompt" not in md
 
 
 def test_main_writes_step_summary_and_exits_zero(tmp_path, monkeypatch):
