@@ -19,6 +19,15 @@ inputs:
     description: Treat WARN-level findings as blocking failures.
     required: false
     default: "false"
+  upload-sarif:
+    description: >-
+      Upload SAST/SCA findings to the GitHub Security tab (code scanning).
+      'auto' (default) uploads only on PUBLIC repos, where code scanning is
+      free. Private repos need GitHub Advanced Security — set 'true' to force
+      the upload there, or 'false' to never upload. When skipped, findings still
+      appear in the job log and still gate the build.
+    required: false
+    default: "auto"
 
 runs:
   using: composite
@@ -65,13 +74,12 @@ runs:
           --sarif --output semgrep.sarif
 
     - name: Upload Semgrep SARIF
-      # Only upload if the scan actually produced a SARIF — a missing file must
-      # never fail the build at the upload step.
-      if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
-      # Best-effort: uploading to the Security tab needs code scanning, which
-      # private repos only get with GitHub Advanced Security. When it's not
-      # available the upload 403s ("Resource not accessible by integration") —
-      # don't fail the build; findings are still in the logs and the SAST gate.
+      # Upload to the Security tab ONLY where code scanning works: public repos
+      # (free), or when forced on (private + GitHub Advanced Security). On a
+      # private/no-GHAS repo the upload 403s, and a failing `uses:` step inside a
+      # composite action fails the whole run even with continue-on-error — so we
+      # skip rather than try. Findings stay in the job log and the SAST gate.
+      if: ${{ always() && hashFiles('semgrep.sarif') != '' && (inputs.upload-sarif == 'true' || (inputs.upload-sarif == 'auto' && github.event.repository.private == false)) }}
       continue-on-error: true
       uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
       with:
@@ -100,11 +108,9 @@ runs:
         ignore-unfixed: true
 
     - name: Upload Trivy SARIF
-      # Skip cleanly if Trivy produced no SARIF (e.g. a DB-download hiccup) so
-      # the upload step can't fail the build on a missing file.
-      if: ${{ always() && hashFiles('trivy.sarif') != '' }}
-      # Best-effort (see the Semgrep upload note): a private repo without GitHub
-      # Advanced Security can't receive SARIF — don't fail the build over it.
+      # Same gate as the Semgrep upload: only where code scanning works (skip on
+      # private/no-GHAS). Also requires the SARIF to exist (DB hiccup → no file).
+      if: ${{ always() && hashFiles('trivy.sarif') != '' && (inputs.upload-sarif == 'true' || (inputs.upload-sarif == 'auto' && github.event.repository.private == false)) }}
       continue-on-error: true
       uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
       with:
