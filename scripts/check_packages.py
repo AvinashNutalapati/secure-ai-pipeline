@@ -30,6 +30,7 @@ Requires: stdlib only.
 
 import argparse
 import ast
+import http.client
 import json
 import os
 import re
@@ -138,19 +139,38 @@ def extract_python_imports(path: Path) -> set[str]:
     return names - PYTHON_STDLIB
 
 
+# A registry-checkable package specifier: optional @scope/, no whitespace or
+# control characters, bounded length (npm's max is 214). Anything else is a
+# parser artifact — e.g. a string literal that ran across lines — and must
+# never become a registry lookup, because building a URL from it raises
+# http.client.InvalidURL.
+_VALID_PKG_NAME = re.compile(r"^@?[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)?$")
+
+
+def _is_checkable(name: str) -> bool:
+    return bool(name) and len(name) <= 214 and _VALID_PKG_NAME.match(name) is not None
+
+
 def extract_js_imports(path: Path) -> set[str]:
-    """Return external package names from require/import statements (skips
-    relative paths starting with . or /)."""
+    """Return external package names from require/import statements.
+
+    Specifiers are matched within a single line — the character classes exclude
+    whitespace, so a string that spans lines can't be captured — and each
+    candidate is validated, so relative paths and malformed blobs never become
+    registry lookups.
+    """
     text = path.read_text(encoding="utf-8", errors="ignore")
     patterns = [
-        r'require\(\s*["\'](@?[^./"\'][^"\']*)["\']',   # require('pkg')
-        r'from\s+["\'](@?[^./"\'][^"\']*)["\']',         # import ... from 'pkg'
-        r'import\s+["\'](@?[^./"\'][^"\']*)["\']',        # import 'pkg'
+        r'require\(\s*["\'](@?[^./"\'\s][^"\'\s]*)["\']',   # require('pkg')
+        r'from\s+["\'](@?[^./"\'\s][^"\'\s]*)["\']',         # import ... from 'pkg'
+        r'import\s+["\'](@?[^./"\'\s][^"\'\s]*)["\']',        # import 'pkg'
     ]
     names = set()
     for pat in patterns:
         for m in re.finditer(pat, text):
-            names.add(_npm_base(m.group(1)))
+            base = _npm_base(m.group(1))
+            if _is_checkable(base):
+                names.add(base)
     return names
 
 
@@ -202,9 +222,11 @@ def _query(url: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
             if exc.code == 404:
                 return "missing"
             # 5xx / rate limit → retry
-        except (urllib.error.URLError, OSError, ValueError):
-            # ValueError covers http.client.InvalidURL from malformed import
-            # names — report "error" (WARN), never crash the gate.
+        except (urllib.error.URLError, OSError, ValueError,
+                http.client.HTTPException):
+            # http.client.InvalidURL (a name with control chars) is an
+            # HTTPException, NOT a ValueError — catch it so a malformed import
+            # can never crash the gate; report "error" (WARN) instead.
             pass
         if i < attempts - 1 and backoff:
             time.sleep(backoff * (i + 1))

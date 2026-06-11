@@ -1,6 +1,8 @@
 """V2 tests for scripts/check_packages.py — scan() behavior, false-positive
 controls, import->package mapping, JS globbing, and outage=warn gating."""
 
+import http.client
+
 import check_packages as cp
 
 
@@ -72,6 +74,40 @@ def test_scan_scoped_npm_package_reduced_to_base(tmp_path, monkeypatch):
     monkeypatch.setattr(cp, "npm_status", lambda pkg, **k: seen.append(pkg) or "exists")
     cp.scan(tmp_path)
     assert seen == ["@scope/pkg"]
+
+
+def test_js_multiline_string_not_extracted(tmp_path):
+    # A require()/import string that runs across lines must NOT be captured as
+    # a package name. It used to build a registry URL containing newlines and
+    # crash urllib with http.client.InvalidURL.
+    bad = _w(tmp_path, "bad.js",
+             "const x = require('\n"
+             "  if (config.application.social.twitterUrl) {\n"
+             "    this.tweetText += config.application.social.twitterUrl.replace('\n")
+    names = cp.extract_js_imports(bad)
+    assert all(" " not in n and "\n" not in n for n in names)
+
+
+def test_scan_does_not_crash_on_malformed_js(tmp_path, monkeypatch):
+    _w(tmp_path, "bad.js",
+       "const x = require('\n  if (cfg.url) { t += cfg.url.replace('\n")
+    _w(tmp_path, "ok.js", "import express from 'express'\n")
+    seen = []
+    monkeypatch.setattr(cp, "npm_status", lambda pkg, **k: seen.append(pkg) or "exists")
+    res = cp.scan(tmp_path)                         # must not raise
+    assert "express" in seen
+    assert all(" " not in s and "\n" not in s for s in seen)
+    assert res["blocked"] == []
+
+
+def test_query_invalid_url_is_treated_as_error(monkeypatch):
+    # http.client.InvalidURL is an HTTPException (NOT a ValueError) — the gate
+    # must treat it as a registry error, never let it propagate.
+    def boom(*a, **k):
+        raise http.client.InvalidURL("URL can't contain control characters. '/\\n'")
+
+    monkeypatch.setattr(cp.urllib.request, "urlopen", boom)
+    assert cp._query("https://x", attempts=1, backoff=0) == "error"
 
 
 def test_node_prefixed_imports_never_hit_npm(tmp_path, monkeypatch):
