@@ -68,6 +68,11 @@ runs:
       # Only upload if the scan actually produced a SARIF — a missing file must
       # never fail the build at the upload step.
       if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
+      # Best-effort: uploading to the Security tab needs code scanning, which
+      # private repos only get with GitHub Advanced Security. When it's not
+      # available the upload 403s ("Resource not accessible by integration") —
+      # don't fail the build; findings are still in the logs and the SAST gate.
+      continue-on-error: true
       uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
       with:
         sarif_file: semgrep.sarif
@@ -98,6 +103,9 @@ runs:
       # Skip cleanly if Trivy produced no SARIF (e.g. a DB-download hiccup) so
       # the upload step can't fail the build on a missing file.
       if: ${{ always() && hashFiles('trivy.sarif') != '' }}
+      # Best-effort (see the Semgrep upload note): a private repo without GitHub
+      # Advanced Security can't receive SARIF — don't fail the build over it.
+      continue-on-error: true
       uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
       with:
         sarif_file: trivy.sarif

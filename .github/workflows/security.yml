@@ -94,6 +94,9 @@ jobs:
 
       - name: Upload SARIF to GitHub
         if: ${{ always() && hashFiles('semgrep.sarif') != '' }}
+        # Best-effort: private repos without GitHub Advanced Security can't
+        # receive code-scanning SARIF; don't fail the build over the upload.
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
         with:
           sarif_file: semgrep.sarif
@@ -129,6 +132,8 @@ jobs:
 
       - name: Upload SARIF
         if: ${{ always() && hashFiles('trivy-fs.sarif') != '' }}
+        # Best-effort (see the Semgrep upload note above).
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
         with:
           sarif_file: trivy-fs.sarif
