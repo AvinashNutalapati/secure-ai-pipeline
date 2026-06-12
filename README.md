@@ -56,7 +56,7 @@ and **consolidated per scan type**: Secrets (Gitleaks · TruffleHog · detect-se
 SAST (Semgrep · Bandit · gosec · Brakeman + AI-specific rules), Dependencies (Trivy ·
 OSV · Grype · pip-audit · npm-audit), Dependency Trust (anti-slopsquatting · GuardDog),
 IaC (Checkov · KICS), CI/CD workflows (zizmor · actionlint · Scorecard), and the AI
-workflow blast-radius check (+ MCP-Scan). Extra scanners activate automatically when present.
+workflow blast-radius check. Extra scanners activate automatically when present.
 Results land in a **job summary**: one table per scan type (severity, finding,
 location, suggested fix — including the dependency's fixed version) plus
 **copy-paste AI fix prompts** per type and one combined prompt.

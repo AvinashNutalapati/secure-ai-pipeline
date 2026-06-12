@@ -11,7 +11,6 @@ from scanners import registry as reg
 from scanners.ci_cd import actionlint, scorecard, zizmor
 from scanners.iac import checkov, kics
 from scanners.packages import guarddog
-from scanners.posture import mcp_scan
 from scanners.sast import bandit, brakeman, gosec
 from scanners.sca import grype, npm_audit, pip_audit
 from scanners.secrets import detect_secrets, trufflehog
@@ -27,7 +26,6 @@ def test_registry_discovers_every_scan_type():
     assert {"semgrep", "bandit", "gosec", "brakeman"} <= set(by_type["sast"])
     assert {"checkov", "kics"} <= set(by_type["iac"])
     assert {"zizmor", "actionlint", "scorecard"} <= set(by_type["ci_cd"])
-    assert "mcp-scan" in by_type["ai_posture"]
     assert "zap" in by_type["dast"]
 
 
@@ -73,12 +71,12 @@ def test_runners_return_none_when_tool_missing(monkeypatch, tmp_path):
     # Every adapter checks _which on its own module import of external_tools.
     for mod in (trufflehog, detect_secrets, grype, pip_audit, npm_audit, bandit,
                 gosec, brakeman, guarddog, checkov, kics, zizmor, actionlint,
-                scorecard, mcp_scan):
+                scorecard):
         monkeypatch.setattr(mod, "_which", lambda name: None)
     ctx = reg.ScanContext(root=tmp_path)
     for mod in (trufflehog, detect_secrets, grype, pip_audit, npm_audit, bandit,
                 gosec, brakeman, guarddog, checkov, kics, zizmor, actionlint,
-                scorecard, mcp_scan):
+                scorecard):
         assert mod.run(ctx) is None, f"{mod.__name__} should degrade to None"
 
 
@@ -283,14 +281,3 @@ def test_scorecard_low_scores_become_findings():
     assert "CI-Tests" not in names            # -1 → didn't run
     bp = [f for f in out if f["title"].startswith("Branch-Protection")][0]
     assert bp["severity"] == "HIGH" and bp["tool"] == "scorecard"
-
-
-def test_mcp_scan_parses_flagged_tools():
-    data = {"servers": [{"name": "evil-mcp", "tools": [
-        {"name": "read_file", "status": "flagged",
-         "message": "tool description contains prompt injection", "severity": "HIGH"},
-        {"name": "ok_tool", "status": "ok", "message": "passed"}]}]}
-    out = mcp_scan.parse(data)
-    assert len(out) == 1                      # only the flagged tool
-    assert out[0]["severity"] == "HIGH" and out[0]["tool"] == "mcp-scan"
-    assert "read_file" in out[0]["title"] and "injection" in out[0]["detail"].lower()
