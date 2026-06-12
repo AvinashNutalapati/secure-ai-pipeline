@@ -3,6 +3,17 @@
 from extensions.claude_mcp import rules
 
 
+# ── de-dup: the MCP engine INHERITS the canonical rules, never hand-copies ───
+
+def test_rules_derived_from_canonical_catalog():
+    from scanners.sast.ai_insecure_defaults import RULES as canon_sast
+    from scanners.sca.known_cves import KNOWN_CVES as canon_cves
+    # Every canonical SAST rule (incl. hardcoded-api-key via its JS trigger) is
+    # present, and the CVE table IS the canonical object — so they can't drift.
+    assert {r.rule_id for r in rules.SAST_RULES} == {r["id"] for r in canon_sast}
+    assert rules.KNOWN_CVES == canon_cves
+
+
 # ── full_scan package semantics ──────────────────────────────────────────────
 
 def test_full_scan_unknown_dep_warns_without_registry():

@@ -14,11 +14,12 @@ Run from the repo root so the ``extensions.claude_mcp`` package resolves.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
-from . import rules
+from . import rules  # also bootstraps scripts/ onto sys.path (for scan_repo)
 from .registry import check_package as _check_package
 
 mcp = FastMCP("secure-ai-pipeline")
@@ -61,6 +62,27 @@ def full_scan(
     """
     return rules.full_scan(code, requirements, language,
                            check_registry=_check_package)
+
+
+@mcp.tool()
+def scan_repo(path: str = ".", deep: bool = False) -> dict:
+    """Run the FULL multi-tool security scan on a directory — every installed OSS
+    scanner (secrets, supply-chain/slopsquatting, SCA, SAST, IaC, CI/CD),
+    consolidated per type — the same registry-driven engine the GitHub Action uses.
+
+    Whatever scanners are on PATH run automatically; nothing extra to wire. `deep`
+    also runs the heaviest tools (e.g. GuardDog deep package analysis). Returns one
+    entry per scan type with the engines that ran and their findings.
+    """
+    import scan_all  # lazy: pulls in the whole pipeline only when actually scanning
+
+    result = scan_all.orchestrate(Path(path).resolve(), offline=False, only=[], deep=deep)
+    return {
+        "root": result["root"],
+        "layers": {t: {"engine": lyr.engine, "note": lyr.note,
+                       "findings": [f.to_dict() for f in lyr.findings]}
+                   for t, lyr in result["layers"].items()},
+    }
 
 
 def main() -> None:

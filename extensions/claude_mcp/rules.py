@@ -1,16 +1,26 @@
 """
-Shared rule engine for the Secure AI Pipeline MCP server.
+Shared rule engine for the Secure AI Pipeline MCP + REST servers.
 
-This mirrors the detection logic in ``scripts/run_pipeline.py`` so the MCP tools
-return the same findings the CI pipeline would. Pure stdlib — no third-party
-imports here, so it is trivially unit-testable and importable anywhere.
+The SAST rules and CVE data are DERIVED from the one canonical source under
+scripts/scanners/ (the same data the CI pipeline, npx scan and the Action use),
+so the MCP tools never drift from the rest of the product. Run from the repo
+root; we add scripts/ to the import path so ``scanners.*`` resolves.
 """
 
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Optional
+
+_SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+if _SCRIPTS.is_dir() and str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from scanners.sast.ai_insecure_defaults import RULES as _CANON_SAST  # noqa: E402
+from scanners.sca.known_cves import KNOWN_CVES  # noqa: E402  (inherited canonical CVEs)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SAST rules (mirror of run_pipeline.SAST_REGEX_RULES + a remediation hint)
@@ -26,55 +36,28 @@ class SastRule:
     fix: str
 
 
-SAST_RULES: list[SastRule] = [
-    SastRule(
-        "flask-debug-true", "ERROR", "BLOCK",
-        re.compile(r"app\.run\s*\(.*debug\s*=\s*True"),
-        "Flask debug=True exposes the interactive debugger — arbitrary code execution.",
-        'debug=os.getenv("FLASK_DEBUG", "false") == "true"',
-    ),
-    SastRule(
-        "tls-verify-false", "ERROR", "BLOCK",
-        re.compile(r"requests\.\w+\s*\(.*verify\s*=\s*False"),
-        "TLS certificate verification disabled (verify=False) — allows MITM attacks.",
-        "Remove verify=False (the default is verify=True).",
-    ),
-    SastRule(
-        "wildcard-cors", "WARNING", "WARN",
-        re.compile(r'origins\s*=\s*["\']\*["\']|Access-Control-Allow-Origin.*\*'),  # nosemgrep: rule definition, not a CORS misconfig
-        "Wildcard CORS — any origin can make credentialed requests to this API.",
-        'Restrict to explicit origins, e.g. origins=["https://yourapp.example.com"].',
-    ),
-    SastRule(
-        "subprocess-shell-true", "ERROR", "BLOCK",
-        re.compile(r"subprocess\.\w+\s*\(.*shell\s*=\s*True"),
-        "subprocess shell=True with user input → command injection.",
-        'Pass an argument list and drop shell=True: subprocess.run(["ping", "-c", "1", host]).',
-    ),
-    SastRule(
-        "sql-injection-fstring", "ERROR", "BLOCK",
-        # Operators must come AFTER the closing quote so the safe parameterised
-        # form execute("… %s", (val,)) never matches.
-        re.compile(r'\.execute\s*\(\s*f["\']'
-                   r'|\.execute\s*\(\s*["\'][^"\']*["\']\s*(?:%|\+|\.\s*format\s*\()'),
-        "SQL query built via f-string/concatenation → SQL injection.",
-        'Use parameters: cursor.execute("SELECT * FROM t WHERE x=?", (val,)).',
-    ),
-    SastRule(
-        "eval-user-input", "ERROR", "BLOCK",
-        re.compile(r"eval\s*\(\s*request\.|exec\s*\(\s*request\."),
-        "eval/exec on request data → arbitrary code execution.",
-        "Remove eval/exec or replace with a safe parser.",
-    ),
-    SastRule(
-        "hardcoded-api-key", "ERROR", "BLOCK",
-        re.compile(
-            r'(?i)(api_key|secret|password|token|passwd|auth_key|access_key)\s*=\s*["\']([A-Za-z0-9\-_]{8,})["\']'
-        ),
-        "Hardcoded credential in source.",
-        'Load from the environment: os.environ["API_KEY"].',
-    ),
-]
+def _compile(rule: dict):
+    """Use the rule's Python regex. hardcoded-api-key has none (the pipeline
+    treats it as a secret), so fall back to its VS Code trigger for snippet scans."""
+    if rule.get("py"):
+        return re.compile(rule["py"])
+    js = rule.get("js") or {}
+    if js.get("trigger"):
+        return re.compile(js["trigger"],
+                          re.IGNORECASE if "i" in (js.get("flags") or "") else 0)
+    return None
+
+
+# Built once from the canonical catalog (scanners.sast.ai_insecure_defaults) —
+# edit a rule there and every channel, including this server, picks it up.
+SAST_RULES: list[SastRule] = []
+for _r in _CANON_SAST:
+    _pat = _compile(_r)
+    if _pat is None:
+        continue
+    SAST_RULES.append(SastRule(
+        _r["id"], _r["severity"], "BLOCK" if _r["severity"] == "ERROR" else "WARN",
+        _pat, _r["message"], _r["fix"]))
 
 _PLACEHOLDER_TOKENS = ("example", "placeholder", "changeme", "your_", "<", ">")
 
@@ -110,25 +93,8 @@ def sast_scan(code: str, language: str = "python") -> list[SastFinding]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SCA — known CVEs for pinned versions (mirror of run_pipeline.KNOWN_CVES)
+# SCA — KNOWN_CVES is imported from scanners.sca.known_cves above (the one source).
 # ─────────────────────────────────────────────────────────────────────────────
-
-KNOWN_CVES: dict[tuple[str, str], list[dict]] = {
-    ("flask", "1.0"): [
-        {"id": "CVE-2023-30861", "severity": "HIGH", "fixed": "2.3.2",
-         "desc": "Flask session cookie not invalidated on logout — session fixation."},
-        {"id": "CVE-2018-1000656", "severity": "HIGH", "fixed": "0.12.3",
-         "desc": "Werkzeug debug console PIN bypass — remote code execution."},
-    ],
-    ("requests", "2.18.0"): [
-        {"id": "CVE-2023-32681", "severity": "MEDIUM", "fixed": "2.31.0",
-         "desc": "Proxy-Authorization header leaked to third-party hosts on redirect."},
-    ],
-    ("flask_cors", "3.0.10"): [
-        {"id": "CVE-2024-6221", "severity": "MEDIUM", "fixed": "4.0.0",
-         "desc": "CORS policy bypass via crafted Origin header."},
-    ],
-}
 
 
 @dataclass
