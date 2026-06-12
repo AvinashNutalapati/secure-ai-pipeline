@@ -23,6 +23,13 @@ from typing import Literal, Optional
 # of truth instead of a second, drifting copy.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_packages import PYTHON_STDLIB  # noqa: E402
+# Rule data lives once, per scan type, under scanners/<type>/ — this runner just
+# applies it. Edit those files to improve a check everywhere it's used.
+from scanners.sast.ai_insecure_defaults import SAST_REGEX_RULES  # noqa: E402
+from scanners.sca.known_cves import KNOWN_CVES  # noqa: E402
+from scanners.secrets.code_secrets import (  # noqa: E402
+    SECRET_PATTERNS, is_placeholder as _is_placeholder,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data model
@@ -118,39 +125,8 @@ def stage0_packages(src: Path) -> list[Finding]:
 # STAGE 0b — Secret / credential detection (Gitleaks logic)
 # ─────────────────────────────────────────────────────────────────────────────
 
-SECRET_PATTERNS = [
-    # (rule_id, regex, description)
-    ("hardcoded-api-key",
-     re.compile(r'(?i)(api_key|secret|password|token|passwd|auth_key|access_key)\s*=\s*["\']([A-Za-z0-9\-_]{8,})["\']'),
-     "Hardcoded credential assigned to variable"),
-    ("aws-key",
-     re.compile(r'AKIA[0-9A-Z]{16}'),
-     "AWS Access Key ID pattern"),
-    ("generic-secret-str",
-     re.compile(r'["\']([A-Za-z0-9+/]{40,})["\']'),
-     "Long high-entropy string — possible hardcoded secret"),
-    ("private-key-header",
-     re.compile(r'-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----'),
-     "Private key block in source"),
-]
-
-# A value is a placeholder only when the WHOLE value matches one of these
-# shapes. Substring checks are dangerous: a real key that merely contains
-# "example" (e.g. examplecorp_prod_8f3a…) must still block.
-PLACEHOLDER_VALUE = re.compile(
-    r"^(?:x{4,}|\*{3,}|\.{3,}|<[^<>]{0,60}>"
-    r"|changeme|change[-_]me|placeholder|dummy|redacted|todo|tbd|none|null"
-    r"|example(?:[-_](?:api[-_]?key|key|token|secret|value|password))?"
-    r"|sample(?:[-_](?:api[-_]?key|key|token|secret|value))?"
-    r"|your[-_][a-z_-]{0,40})$",
-    re.IGNORECASE,
-)
-
-
-def _is_placeholder(value: str) -> bool:
-    v = value.strip().strip("'\"")
-    return bool(PLACEHOLDER_VALUE.match(v))
-
+# SECRET_PATTERNS + the placeholder logic now live in
+# scanners/secrets/code_secrets.py (imported at the top).
 
 def stage0_secrets(src: Path) -> list[Finding]:
     findings = []
@@ -179,29 +155,7 @@ def stage0_secrets(src: Path) -> list[Finding]:
 # STAGE 1a — SAST (Semgrep custom rules reimplemented as AST + regex)
 # ─────────────────────────────────────────────────────────────────────────────
 
-SAST_REGEX_RULES = [
-    ("flask-debug-true",    "ERROR", "BLOCK",
-     re.compile(r'app\.run\s*\(.*debug\s*=\s*True'),
-     "Flask debug=True exposes interactive debugger — allows arbitrary code execution in browser."),
-    ("tls-verify-false",    "ERROR", "BLOCK",
-     re.compile(r'requests\.\w+\s*\(.*verify\s*=\s*False'),
-     "TLS certificate verification disabled (verify=False). Allows MITM attacks."),
-    ("wildcard-cors",       "WARNING", "WARN",
-     re.compile(r'origins\s*=\s*["\']\*["\']|Access-Control-Allow-Origin.*\*'),  # nosemgrep: rule definition, not a CORS misconfig
-     "Wildcard CORS — any origin can make credentialed requests to this API."),
-    ("subprocess-shell-true","ERROR", "BLOCK",
-     re.compile(r'subprocess\.\w+\s*\(.*shell\s*=\s*True'),
-     "subprocess shell=True with user input → command injection."),
-    ("sql-injection-fstring","ERROR", "BLOCK",
-     # The %/+/.format branches require the operator AFTER the closing quote so
-     # the safe parameterised form execute("… %s", (val,)) never matches.
-     re.compile(r'\.execute\s*\(\s*f["\']'
-                r'|\.execute\s*\(\s*["\'][^"\']*["\']\s*(?:%|\+|\.\s*format\s*\()'),
-     "SQL query built via f-string/concatenation — parameterise with cursor.execute(sql,(val,))."),
-    ("eval-user-input",     "ERROR", "BLOCK",
-     re.compile(r'eval\s*\(\s*request\.|exec\s*\(\s*request\.'),
-     "eval/exec on request data → arbitrary code execution."),
-]
+# SAST_REGEX_RULES now lives in scanners/sast/ai_insecure_defaults.py (imported above).
 
 def stage1_sast(src: Path) -> list[Finding]:
     findings = []
@@ -224,23 +178,7 @@ def stage1_sast(src: Path) -> list[Finding]:
 # STAGE 1b — SCA (Trivy: known CVEs for pinned dependency versions)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Curated CVE data for the packages/versions in the demo requirements.txt
-KNOWN_CVES = {
-    ("flask", "1.0"): [
-        {"id":"CVE-2023-30861","severity":"HIGH","fixed":"2.3.2",
-         "desc":"Flask session cookie not invalidated on logout — session fixation."},
-        {"id":"CVE-2018-1000656","severity":"HIGH","fixed":"0.12.3",
-         "desc":"Werkzeug (Flask dep) debug console PIN bypass — remote code execution."},
-    ],
-    ("requests", "2.18.0"): [
-        {"id":"CVE-2023-32681","severity":"MEDIUM","fixed":"2.31.0",
-         "desc":"Proxy-Authorization header leaked to third-party hosts on redirect."},
-    ],
-    ("flask_cors", "3.0.10"): [
-        {"id":"CVE-2024-6221","severity":"MEDIUM","fixed":"4.0.0",
-         "desc":"CORS policy bypass via crafted Origin header."},
-    ],
-}
+# KNOWN_CVES now lives in scanners/sca/known_cves.py (imported above).
 
 def parse_requirements(req: Optional[Path]) -> list[tuple[str,str]]:
     """Returns list of (pkg_name_normalised, version) from requirements.txt.
