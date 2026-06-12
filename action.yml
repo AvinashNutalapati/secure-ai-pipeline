@@ -80,6 +80,10 @@ runs:
         # source is heavily rate-limited and intermittently fails the download.
         TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
         TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1
+      # Tools run in PARALLEL with progress on stderr + bounded per-tool timeouts
+      # (SAP_TOOL_TIMEOUT, default 300s; SAP_SCAN_CONCURRENCY, default 4) so the
+      # step never looks frozen and one slow scanner can't stall the job. --offline
+      # skips the network slopsquatting the Stage 0 gate already did.
       # Report-first by default (|| true so a scanner hiccup never breaks the
       # build); fail-on-warnings makes HIGH+ findings block. scan.json feeds the
       # summary, sap.sarif feeds code scanning — both written before any gate.
@@ -87,12 +91,12 @@ runs:
         if [ "${{ inputs.fail-on-warnings }}" = "true" ]; then
           python "${{ github.action_path }}/scripts/scan_all.py" "$GITHUB_WORKSPACE" \
             --only secrets,packages,sca,sast,iac,ci_cd \
-            --no-input --no-color --no-fix-prompts --no-dast \
+            --offline --no-input --no-color --no-fix-prompts --no-dast \
             --json scan.json --sarif sap.sarif --fail-on high
         else
           python "${{ github.action_path }}/scripts/scan_all.py" "$GITHUB_WORKSPACE" \
             --only secrets,packages,sca,sast,iac,ci_cd \
-            --no-input --no-color --no-fix-prompts --no-dast \
+            --offline --no-input --no-color --no-fix-prompts --no-dast \
             --json scan.json --sarif sap.sarif || true
         fi
 

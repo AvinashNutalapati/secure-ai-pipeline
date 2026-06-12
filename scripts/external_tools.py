@@ -79,15 +79,26 @@ def _norm_sev(value: str, default: str = "MEDIUM") -> str:
     }.get(v, default)
 
 
-def _run(cmd: list, timeout: int = 600, cwd=None) -> Optional[subprocess.CompletedProcess]:
-    """Run a tool, returning the completed process or None on any failure.
-    Tools legitimately exit non-zero when they find issues, so the caller
-    inspects output rather than the return code. ``cwd`` runs the tool from a
-    directory (needed by tools that take package globs like gosec's ./...)."""
+def _default_timeout() -> int:
+    """Per-tool wall-clock cap. Bounded so one slow/hung scanner can't stall the
+    whole job; override with SAP_TOOL_TIMEOUT (seconds)."""
+    try:
+        return int(os.environ.get("SAP_TOOL_TIMEOUT", "300"))
+    except ValueError:
+        return 300
+
+
+def _run(cmd: list, timeout: Optional[int] = None, cwd=None) -> Optional[subprocess.CompletedProcess]:
+    """Run a tool, returning the completed process or None on any failure
+    (including a timeout — a tool that overruns its budget is skipped, not fatal).
+    Tools legitimately exit non-zero when they find issues, so the caller inspects
+    output rather than the return code. ``cwd`` runs the tool from a directory
+    (needed by tools that take package globs like gosec's ./...)."""
     try:
         return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False,
-            cwd=str(cwd) if cwd else None,
+            cmd, capture_output=True, text=True,
+            timeout=timeout if timeout is not None else _default_timeout(),
+            check=False, cwd=str(cwd) if cwd else None,
         )
     except (OSError, subprocess.SubprocessError):
         return None

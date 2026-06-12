@@ -22,9 +22,11 @@ stdlib only.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sys
+import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -224,22 +226,34 @@ BUILTIN_FALLBACK = {
 }
 
 
-def run_layer(scan_type: str, ctx: "registry.ScanContext") -> Layer:
-    """Run EVERY installed tool registered for this scan type, add the built-in
-    per the fallback policy, and consolidate into one Layer. This single path is
-    what makes 'drop an adapter file under scanners/ → it runs in every channel'
-    true: scan_all, the Action, and the MCP server all reach a tool through here."""
+def _progress(msg: str) -> None:
+    """Stream scan progress to stderr so a long CI step never looks frozen.
+    stdout carries the table / --json path, so progress stays on stderr."""
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _run_adapter(adapter, ctx) -> tuple:
+    """Run one tool, timed, swallowing any error (a broken tool is skipped, not
+    fatal). Returns (rows|None, elapsed_seconds)."""
+    t0 = time.monotonic()
+    try:
+        rows = adapter.run(ctx)
+    except Exception:
+        rows = None
+    return rows, time.monotonic() - t0
+
+
+def _assemble_layer(scan_type: str, ext_results: list, ctx: "registry.ScanContext") -> Layer:
+    """Consolidate one type's results into a Layer: the (already-fetched, possibly
+    parallel) external tool outputs + the per-type built-in fallback per policy.
+    This is the single path that makes 'drop an adapter file under scanners/ → it
+    runs in every channel' true — scan_all, the Action and the MCP server all
+    reach a tool through the registry, here."""
     findings: list = []
     engines: list = []
-    for adapter in registry.available_adapters(scan_type):
-        try:
-            rows = adapter.run(ctx)
-        except Exception:
-            rows = None                        # a broken tool never sinks the scan
-        if rows is None:
-            continue
+    for name, rows in ext_results:
         findings += _from_ext(scan_type, rows)
-        engines.append(adapter.name)
+        engines.append(name)
 
     fb = BUILTIN_FALLBACK.get(scan_type)
     if fb:
@@ -304,9 +318,39 @@ def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
         selected = [t for t in TABLE_ORDER if t != "dast" and (
             t in BUILTIN_FALLBACK or t == "ai_posture" or registry.available_adapters(t))]
 
+    # Run every external scanner across all selected types CONCURRENTLY (each is a
+    # subprocess, so threads give real parallelism). Running ~10 tools one after
+    # another with no output is what made the CI step look frozen; progress now
+    # streams to stderr and wall-clock collapses toward the slowest single tool.
+    _progress(f"Secure AI Pipeline — scanning {root}")
+    ext_jobs = [(t, a) for t in selected if t != "ai_posture"
+                for a in registry.available_adapters(t)]
+    ext_results: dict = {t: [] for t in selected}
+    if ext_jobs:
+        try:
+            workers = min(int(os.environ.get("SAP_SCAN_CONCURRENCY", "4")), len(ext_jobs))
+        except ValueError:
+            workers = min(4, len(ext_jobs))
+        _progress(f"  {len(ext_jobs)} tool(s), ≤{max(1, workers)} at once: "
+                  + ", ".join(sorted(a.name for _, a in ext_jobs)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futs = {pool.submit(_run_adapter, a, ctx): (t, a) for (t, a) in ext_jobs}
+            for fut in concurrent.futures.as_completed(futs):
+                t, a = futs[fut]
+                rows, elapsed = fut.result()
+                if rows is None:
+                    _progress(f"    · {a.name} ({t}) — skipped, {elapsed:.0f}s")
+                    continue
+                ext_results[t].append((a.name, rows))
+                _progress(f"    ✓ {a.name} ({t}) — {len(rows)} finding(s), {elapsed:.0f}s")
+
     layers: dict = {}
     for t in selected:
-        layers[t] = run_ai_posture(root, pol) if t == "ai_posture" else run_layer(t, ctx)
+        if t == "ai_posture":
+            _progress("  ▶ ai_posture — AI workflow blast radius")
+            layers[t] = run_ai_posture(root, pol)
+        else:
+            layers[t] = _assemble_layer(t, ext_results.get(t, []), ctx)
     if dast_url:
         layers["dast"] = run_dast(dast_url, ctx)
 

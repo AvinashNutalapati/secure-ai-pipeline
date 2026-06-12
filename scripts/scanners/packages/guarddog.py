@@ -76,7 +76,7 @@ def run(ctx: ScanContext) -> Optional[list]:
             targets.append(("npm", pkg_json))
     for ecosystem, manifest in targets:
         proc = _run(["guarddog", ecosystem, "verify", str(manifest),
-                     "--output-format", "json"], timeout=900)
+                     "--output-format", "json"])
         if proc is None:
             continue
         try:

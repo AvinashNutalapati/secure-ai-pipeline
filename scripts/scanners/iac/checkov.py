@@ -48,7 +48,7 @@ def run(ctx: ScanContext) -> Optional[list]:
     if not _which("checkov"):
         return None
     proc = _run(["checkov", "-d", str(ctx.root), "-o", "json",
-                 "--compact", "--quiet"], timeout=900)
+                 "--compact", "--quiet"])
     if proc is None:
         return []
     try:
