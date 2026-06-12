@@ -90,3 +90,12 @@ def test_network_error_collapses_to_false_in_boolean_api():
 def test_npm_existence_uses_registry():
     with patch.object(cp.urllib.request, "urlopen", return_value=_FakeResp(200)):
         assert cp.npm_exists("express") is True
+
+
+# ── the check_packages shim transparently re-exports the relocated impl ──────
+
+def test_shim_reexports_the_impl():
+    from scanners.packages import slopsquatting as impl
+    assert cp.scan is impl.scan
+    assert cp.PYTHON_STDLIB is impl.PYTHON_STDLIB
+    assert cp._skip is impl._skip and cp.main is impl.main

@@ -1,9 +1,10 @@
-"""V2 tests for scripts/check_packages.py — scan() behavior, false-positive
+"""V2 tests for the anti-slopsquatting impl (scanners.packages.slopsquatting,
+re-exported by scripts/check_packages.py) — scan() behavior, false-positive
 controls, import->package mapping, JS globbing, and outage=warn gating."""
 
 import http.client
 
-import check_packages as cp
+from scanners.packages import slopsquatting as cp  # patches must hit scan()'s own namespace
 
 
 def _w(tmp_path, name, body):
