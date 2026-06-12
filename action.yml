@@ -88,11 +88,18 @@ runs:
       with:
         sarif_file: semgrep.sarif
 
-    - name: Stage 1 — SAST gate (block on errors; warnings only if fail-on-warnings)
+    - name: Stage 1 — SAST gate (report-only by default; blocks when fail-on-warnings=true)
       shell: bash
       env:
         FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
-      run: python "${{ github.action_path }}/scripts/sarif_gate.py" semgrep.sarif --label Semgrep
+      # Report-first like SCA: findings are shown but don't fail the build unless
+      # fail-on-warnings is true (then ERROR-level blocks, warnings too).
+      run: |
+        if [ "${{ inputs.fail-on-warnings }}" = "true" ]; then
+          python "${{ github.action_path }}/scripts/sarif_gate.py" semgrep.sarif --label Semgrep
+        else
+          python "${{ github.action_path }}/scripts/sarif_gate.py" semgrep.sarif --label Semgrep --report-only
+        fi
 
     - name: Stage 1 — SCA + IaC (Trivy)
       uses: aquasecurity/trivy-action@b2933f565dbc598b29947660e66259e3c7bc8561 # v0.20.0

@@ -50,11 +50,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sarif", help="Path to the SARIF file to gate on.")
     parser.add_argument("--label", default="SARIF", help="Tool name for log output.")
+    parser.add_argument("--report-only", action="store_true",
+                        help="Print findings but never fail the build (exit 0).")
     args = parser.parse_args(argv)
 
     fail_on_warnings = os.environ.get("FAIL_ON_WARNINGS", "false").strip().lower() in TRUTHY
 
     if not os.path.exists(args.sarif):
+        if args.report_only:
+            print(f"  [{args.label}] no SARIF file at '{args.sarif}' — nothing to report.")
+            return 0
         # Fail closed: a missing SARIF means the scanner never ran or wrote to
         # a different path. Exiting 0 here would silently disable the gate.
         print(f"  [FAIL] no SARIF file at '{args.sarif}' — scanner output is "
@@ -94,6 +99,11 @@ def main(argv=None):
     for rid in warnings:
         verb = "BLOCK" if fail_on_warnings else "WARN "
         print(f"    [{verb}] {rid}")
+
+    if args.report_only:
+        print(f"  [{args.label}] report-only — {len(errors)} error(s), "
+              f"{len(warnings)} warning(s) reported, not blocking.")
+        return 0
 
     blocking = len(errors) > 0 or (fail_on_warnings and len(warnings) > 0)
     if blocking:

@@ -1,0 +1,16 @@
+# Semgrep ignore for the secure-ai-pipeline repo's OWN self-scan.
+#
+# This is a security tool, so parts of its source deliberately contain
+# security-pattern-shaped code (rule definitions, regex patterns) and run
+# subprocesses by design — Semgrep's community rules flag those as findings.
+# Genuinely-intentional lines are suppressed inline with `nosemgrep` + a reason
+# (cli/*.js child_process, check_packages.py urllib, openapi.yaml). Here we drop
+# non-product areas so the self-scan stays meaningful instead of noisy.
+
+tests/
+examples/
+docs/
+deep-research-report.md
+BUILD_PROMPT.md
+**/node_modules/
+extensions/vscode/out/

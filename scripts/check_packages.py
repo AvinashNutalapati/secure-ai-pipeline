@@ -216,6 +216,7 @@ _STATUS_CACHE: dict[tuple[str, str], str] = {}
 def _query(url: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
     for i in range(attempts):
         try:
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- URL is a hardcoded registry host + a validated package name; this guard exists precisely to vet package names.
             with urllib.request.urlopen(url, timeout=10) as resp:
                 return "exists" if resp.status == 200 else "missing"
         except urllib.error.HTTPError as exc:

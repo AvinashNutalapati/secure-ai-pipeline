@@ -112,6 +112,17 @@ def test_missing_file_fails_closed(tmp_path, monkeypatch):
     assert _run(missing, fail_on_warnings=True, monkeypatch=monkeypatch) == 1
 
 
+def test_report_only_never_blocks(tmp_path, monkeypatch):
+    # --report-only prints findings but always exits 0, even on error-level.
+    monkeypatch.setenv("FAIL_ON_WARNINGS", "false")
+    path = _sarif(tmp_path, "e.sarif", [{"ruleId": "x", "level": "error"}])
+    assert sg.main([path, "--label", "Semgrep", "--report-only"]) == 0
+
+
+def test_report_only_missing_file_exits_zero(tmp_path):
+    assert sg.main([str(tmp_path / "none.sarif"), "--report-only"]) == 0
+
+
 def test_truthy_env_values(tmp_path, monkeypatch):
     path = _sarif(tmp_path, "w.sarif", [{"ruleId": "wildcard-cors", "level": "warning"}])
     for val in ("1", "yes", "on", "TRUE"):

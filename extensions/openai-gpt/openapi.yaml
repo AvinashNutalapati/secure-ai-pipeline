@@ -19,7 +19,7 @@ paths:
     post:
       operationId: checkPackage
       summary: Verify a package exists on PyPI or npm (anti-slopsquatting).
-      x-openai-isConsequential: false
+      x-openai-isConsequential: false  # nosemgrep: yaml.openapi.security.openai-consequential-action-false.openai-consequential-action-false -- read-only scanner endpoints; intentionally non-consequential.
       requestBody:
         required: true
         content:
@@ -37,7 +37,7 @@ paths:
     post:
       operationId: sastScan
       summary: Scan a code snippet for insecure patterns.
-      x-openai-isConsequential: false
+      x-openai-isConsequential: false  # nosemgrep: yaml.openapi.security.openai-consequential-action-false.openai-consequential-action-false -- read-only scanner endpoints; intentionally non-consequential.
       requestBody:
         required: true
         content:
@@ -55,7 +55,7 @@ paths:
     post:
       operationId: scaScan
       summary: Check pinned dependency versions for known CVEs.
-      x-openai-isConsequential: false
+      x-openai-isConsequential: false  # nosemgrep: yaml.openapi.security.openai-consequential-action-false.openai-consequential-action-false -- read-only scanner endpoints; intentionally non-consequential.
       requestBody:
         required: true
         content:
@@ -73,7 +73,7 @@ paths:
     post:
       operationId: fullScan
       summary: Run package, SAST and SCA checks together and report a blocking decision.
-      x-openai-isConsequential: false
+      x-openai-isConsequential: false  # nosemgrep: yaml.openapi.security.openai-consequential-action-false.openai-consequential-action-false -- read-only scanner endpoints; intentionally non-consequential.
       requestBody:
         required: true
         content:

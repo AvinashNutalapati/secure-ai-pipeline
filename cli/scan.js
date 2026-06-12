@@ -14,6 +14,7 @@
 
 const fs = require("fs");
 const path = require("path");
+// nosemgrep: javascript.lang.security.detect-child-process.detect-child-process -- this CLI spawns python by design, with fixed argv and no shell.
 const { spawnSync } = require("child_process");
 
 const PKG_ROOT = path.join(__dirname, "..");
