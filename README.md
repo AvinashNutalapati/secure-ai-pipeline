@@ -14,15 +14,73 @@
 [![Use this template](https://img.shields.io/badge/Use%20this-template-2ea44f?logo=github)](https://github.com/AvinashNutalapati/secure-ai-pipeline/generate)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
-## Try it — 60 seconds, nothing to install
+## Use it in GitHub Actions — recommended, zero install
+
+The simplest way to run it: add one workflow file. GitHub's runner installs the
+scanners (Gitleaks, Semgrep, Trivy, OSV-Scanner) on every run, so **you install
+nothing**, and **your code never leaves your own GitHub repo** — we never see it.
+
+Add `.github/workflows/security.yml`:
+
+```yaml
+name: Secure AI Pipeline
+on:
+  push:
+  pull_request:
+  workflow_dispatch:          # also lets you run it by hand from the Actions tab
+
+permissions:
+  contents: read
+  security-events: write      # lets findings show in the Security tab (public repos / GHAS)
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                              # full git history for the secret scan
+      - uses: AvinashNutalapati/secure-ai-pipeline@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # composite actions can't read secrets themselves
+        with:
+          fail-on-warnings: "false"                   # report-only by default; "true" blocks on CVEs/warnings
+          # staging-url: ${{ vars.STAGING_URL }}      # optional: enables the ZAP DAST scan
+          # upload-sarif: "auto"                       # auto (public repos) | true (force, needs GHAS) | false
+```
+
+Push it (or run it from the **Actions** tab) and on every push / PR you get —
+**with nothing installed locally** — Secrets (Gitleaks, full history), SAST
+(Semgrep + AI-specific rules), SCA + malicious packages (Trivy + anti-slopsquatting),
+and the AI workflow blast-radius check. Results land in a **job summary**: one
+table per scan type (severity, finding, location, and a suggested fix — including
+the dependency's fixed version) plus **copy-paste AI fix prompts** per type and one
+combined prompt.
+
+**Defaults are report-first so the first run isn't a wall of red:** leaked secrets
+and hallucinated/malicious packages **always block**; CVEs and SAST warnings are
+**reported, not blocking**, until you set `fail-on-warnings: "true"`.
+
+> **Two lines that matter:** `fetch-depth: 0` lets Gitleaks scan your full history
+> (a shallow clone only sees HEAD), and the `GITHUB_TOKEN` env line is required
+> because composite actions can't read `secrets` on their own.
+>
+> **Private repos:** the Security-tab upload needs a public repo or GitHub Advanced
+> Security; without it the upload auto-skips, the run stays green, and findings
+> still appear in the **Actions log** and the **job summary**.
+>
+> **Pin for production:** `@v2` tracks the latest fix; pin to a tag/SHA (e.g.
+> `@v2.0.8`) to lock the version.
+
+## Use it locally — one command
 
 ```bash
 npx secure-ai-pipeline@latest scan .
 ```
 
-That's the whole onboarding. It runs locally (no account, no upload, no telemetry)
-and prints one compact table per scan layer — **Secrets, Dependencies (SCA +
-malicious packages), SAST, AI workflow blast radius**, and optional DAST:
+Runs locally (no account, no upload, no telemetry) and prints one compact table per
+scan layer — **Secrets, Dependencies (SCA + malicious packages), SAST, AI workflow
+blast radius**, and optional DAST:
 
 ```text
   Secure AI Pipeline — full scan
@@ -49,14 +107,32 @@ malicious packages), SAST, AI workflow blast radius**, and optional DAST:
       pass --dast-url <url> (or answer the prompt) to scan a running app
 ```
 
-Initial output stays compact — **severity + title only**. Drill into any layer with
-`--detail sast` (or just answer the interactive prompt), get a clickable report with
-`--html report.html`, and a ready-to-paste **fix prompt is generated per layer** in
-`.secure-ai-pipeline/`. Each layer uses its open-source scanner when installed
-(gitleaks, semgrep, trivy, osv-scanner, ZAP) and a built-in fallback otherwise —
-`scan --tools` shows what you have and how to install the rest.
+Initial output stays compact (**severity + title only**). Drill in, export, gate:
 
-Want to watch it light up first? Point it at the deliberately-insecure demo repo:
+```bash
+npx secure-ai-pipeline scan . --detail sast                       # expand one layer
+npx secure-ai-pipeline scan . --dast-url http://localhost:3000    # add a DAST pass
+npx secure-ai-pipeline scan . --html report.html --json out.json  # shareable reports
+npx secure-ai-pipeline scan . --tools                             # which OSS engines you have
+npx secure-ai-pipeline posture .                                  # just the AI blast-radius checkup
+npx secure-ai-pipeline init                                       # install the CI workflow + hooks here
+```
+
+A ready-to-paste **fix prompt per layer** is written to `.secure-ai-pipeline/`. Each
+layer uses its open-source scanner when installed and a built-in Python fallback
+otherwise — install the engines for deeper coverage (all open source, no accounts):
+
+```bash
+brew install gitleaks trivy osv-scanner   # secrets · CVEs · malicious packages
+pipx install semgrep                      # full SAST (JS/TS + community rules)
+# DAST uses ZAP via Docker (https://docs.docker.com/get-docker/)
+```
+
+> Malicious-package detection uses **OSV-Scanner** (open source, reads the OSV
+> `MAL-` advisories). Socket.dev needs a paid account/API key, so it's an opt-in
+> add-on (`SOCKET_API_KEY` + `npm i -g @socketsecurity/cli`), not the default.
+
+Watch it light up against the deliberately-insecure demo repo:
 
 ```bash
 git clone https://github.com/AvinashNutalapati/secure-ai-pipeline-demo
@@ -88,43 +164,14 @@ between the assistant, your laptop, the repo, MCP servers, and CI.
 | **A 5-minute checkup** | `npx secure-ai-pipeline scan .` | Blast Radius Score + fixes, in your terminal |
 | **CI for an existing repo** | `npx secure-ai-pipeline init` | Workflow, scanners, SAST rules, pre-commit hooks — copied in, idempotent, never overwrites your files |
 | **CI for a new repo** | [Use this template](https://github.com/AvinashNutalapati/secure-ai-pipeline/generate) | A repo born with the pipeline wired and a setup checklist issue |
-| **One line in your workflow** | GitHub Action (snippet below) | Full pipeline as a single `uses:` step |
+| **One line in your workflow** | [GitHub Action](#use-it-in-github-actions--recommended-zero-install) (top of README) | Full pipeline as a single `uses:` step |
 | **Findings while you type** | [VS Code / Cursor extension](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline) | Inline squiggles + one-click quick fixes, plus a Blast Radius command |
 | **Your AI checks itself** | Claude MCP server / Custom GPT (below) | The assistant verifies packages and scans code mid-conversation |
 
 ### GitHub Action
 
-Copy to `.github/workflows/security.yml`:
-
-```yaml
-name: Secure AI Pipeline
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
-  security-events: write   # SARIF upload to the Security tab
-
-jobs:
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0                              # full history for the secrets scan
-      - uses: AvinashNutalapati/secure-ai-pipeline@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # composite actions can't read secrets
-        with:
-          staging-url: ${{ vars.STAGING_URL }}        # optional, enables DAST
-          fail-on-warnings: "false"                   # optional, block on WARN findings
-```
-
-The two extra lines matter: `fetch-depth: 0` lets Gitleaks scan your **full git
-history** (a depth-1 clone only scans HEAD), and the `GITHUB_TOKEN` env line is
-required because composite actions cannot read `secrets` themselves.
+The recommended path — full workflow and options are at the top of this README,
+[Use it in GitHub Actions](#use-it-in-github-actions--recommended-zero-install).
 
 ### Claude Code (MCP)
 
@@ -191,30 +238,7 @@ No policy file? `scan` stays report-only and friendly. There's also
 `--fail-on high` for one-off CI gating, `--offline` to skip network checks,
 `--exclude 'data/**,test/**'` to silence fixture/vendor dirs, and inline
 `# nosemgrep` / `# nosec` comments to suppress a confirmed-safe line in place.
-
-### Run the full scan
-
-```bash
-npx secure-ai-pipeline scan .                 # all layers, compact tables
-npx secure-ai-pipeline scan . --detail sast   # drill into one layer
-npx secure-ai-pipeline scan . --dast-url http://localhost:3000   # add a DAST pass
-npx secure-ai-pipeline scan . --html report.html --json report.json
-npx secure-ai-pipeline scan . --tools         # which OSS engines are installed
-npx secure-ai-pipeline posture .              # just the AI blast-radius checkup
-```
-
-**Install the OSS engines for deeper coverage** (the scan auto-uses them, and
-falls back to built-ins otherwise — all open source, no accounts):
-
-```bash
-brew install gitleaks trivy osv-scanner   # secrets · CVEs · malicious packages
-pipx install semgrep                      # full SAST (JS/TS + community rules)
-# DAST uses ZAP via Docker (https://docs.docker.com/get-docker/)
-```
-
-> Malicious-package detection uses **OSV-Scanner** (open source, reads the OSV
-> `MAL-` advisories). Socket.dev needs a paid account/API key, so it's an opt-in
-> add-on (`SOCKET_API_KEY` + `npm i -g @socketsecurity/cli`), not the default.
+In CI, the same is the `fail-on-warnings` input on the Action (above).
 
 ## Privacy & trust
 
