@@ -42,13 +42,13 @@ runs:
       # Pass the caller's workspace explicitly: the script lives in the action's
       # own checkout (github.action_path), so it must be told which repo to scan.
       # The action path is quoted — runner roots can contain spaces.
-      run: python "${{ github.action_path }}/scripts/check_packages.py" "$GITHUB_WORKSPACE"
+      run: python "${{ github.action_path }}/scripts/check_packages.py" "$GITHUB_WORKSPACE" --json packages.json
 
     - name: Stage 0 — AI Agent Blast Radius (AI IDEs, Claude, MCP, Actions)
       shell: bash
       # Report-only by default; gates when the caller repo has a
       # secure-ai-pipeline.yml policy with fail_on set.
-      run: python "${{ github.action_path }}/scripts/blast_radius.py" "$GITHUB_WORKSPACE" --offline --no-color
+      run: python "${{ github.action_path }}/scripts/blast_radius.py" "$GITHUB_WORKSPACE" --offline --no-color --json blast.json
 
     - name: Stage 0 — Secret scan (Gitleaks)
       uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
@@ -131,15 +131,17 @@ runs:
     - name: Job summary — findings + copy-paste fix prompts
       if: always()
       shell: bash
-      # Report-only: one uniform table per scan type (Secrets, SCA, SAST) in the
-      # run's Step Summary, with a suggested fix per finding (incl. Trivy's
-      # fixed-version), a copy-paste AI fix prompt per type, and one combined
-      # prompt at the end. Reads each scanner's SARIF; never fails the build.
+      # Report-only: one uniform table per scan type — Secrets, Dependency Trust
+      # (anti-slopsquatting), SCA, SAST, and AI Workflow Blast Radius — in the
+      # run's Step Summary, each with a suggested fix and a copy-paste AI fix
+      # prompt, plus one combined prompt. Never fails the build.
       run: |
         python "${{ github.action_path }}/scripts/job_summary.py" \
           --scan secrets "Secrets (Gitleaks)" results.sarif \
+          --scan packages "Dependency Trust (anti-slopsquatting)" packages.json \
+          --scan sca "Dependencies (Trivy SCA)" trivy.sarif \
           --scan sast "SAST (Semgrep)" semgrep.sarif \
-          --scan sca "Dependencies (Trivy SCA)" trivy.sarif
+          --scan ai_posture "AI Workflow Blast Radius" blast.json
 
     - name: Stage 2 — Stage ZAP rules into the workspace
       if: ${{ inputs.staging-url != '' }}

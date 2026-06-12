@@ -27,7 +27,12 @@ jobs:
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_SUMMARY: "false"   # rendered in our own unified panel
         # Gitleaks exits non-zero on any leak → job fails → pipeline blocks
+
+      - name: Summarise secrets in the run summary
+        if: always()
+        run: python3 scripts/job_summary.py --section-only --scan secrets "Secrets (Gitleaks)" results.sarif
 
   # ─────────────────────────────────────────────────────────────
   # STAGE 0 — Anti-slopsquatting (hard block)
@@ -44,8 +49,12 @@ jobs:
           python-version: "3.12"
 
       - name: Validate all dependencies exist on registries
-        run: python scripts/check_packages.py
+        run: python scripts/check_packages.py --json packages.json
         # Exits 1 if any dep name is unresolvable on PyPI or npm
+
+      - name: Summarise dependency trust in the run summary
+        if: always()
+        run: python3 scripts/job_summary.py --section-only --scan packages "Dependency Trust (anti-slopsquatting)" packages.json
 
   # ─────────────────────────────────────────────────────────────
   # AI workflow posture — Blast Radius Score (report-only unless a
@@ -63,7 +72,11 @@ jobs:
           python-version: "3.12"
 
       - name: AI Agent Blast Radius checkup
-        run: python scripts/blast_radius.py "$GITHUB_WORKSPACE" --offline --no-color
+        run: python scripts/blast_radius.py "$GITHUB_WORKSPACE" --offline --no-color --json blast.json
+
+      - name: Summarise AI Blast Radius in the run summary
+        if: always()
+        run: python3 scripts/job_summary.py --section-only --scan ai_posture "AI Workflow Blast Radius" blast.json
 
   # ─────────────────────────────────────────────────────────────
   # STAGE 1 — SAST (Semgrep — hard block on high-confidence)
@@ -108,6 +121,10 @@ jobs:
         # are suppressed with inline `nosemgrep` + reasons; the gate is
         # report-only so a community-rule false-positive can't block the repo.
 
+      - name: Summarise SAST in the run summary
+        if: always()
+        run: python3 scripts/job_summary.py --section-only --scan sast "SAST (Semgrep)" semgrep.sarif
+
   # ─────────────────────────────────────────────────────────────
   # STAGE 1 — SCA + IaC + Container (Trivy — block on Critical/High fixable)
   # ─────────────────────────────────────────────────────────────
@@ -140,6 +157,10 @@ jobs:
         uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
         with:
           sarif_file: trivy-fs.sarif
+
+      - name: Summarise SCA in the run summary
+        if: always()
+        run: python3 scripts/job_summary.py --section-only --scan sca "Dependencies (Trivy SCA)" trivy-fs.sarif
 
   # ─────────────────────────────────────────────────────────────
   # STAGE 2 — DAST (ZAP baseline — report only, no block)

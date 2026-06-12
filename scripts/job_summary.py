@@ -9,8 +9,10 @@ prompt per type, and one combined "fix everything" prompt at the end. Report-onl
 always exits 0 (gating is sarif_gate.py's job).
 
 Usage:
-    python job_summary.py --scan TYPE LABEL SARIF [--scan ...]
-      TYPE = secrets | sca | sast   (controls fix wording + fixed-version parsing)
+    python job_summary.py --scan TYPE LABEL PATH [--scan ...]
+      TYPE = secrets | sca | sast       (reads a SARIF file)
+           | ai_posture                 (reads blast_radius.py --json output)
+           | packages                   (reads check_packages.py --json output)
 
 stdlib only.
 """
@@ -32,7 +34,16 @@ _INTRO = {
     "sca": "upgrade each vulnerable dependency to the fixed version shown (or "
            "replace the package if no fix exists)",
     "sast": "fix each insecure code pattern using the secure idiom the rule describes",
+    "ai_posture": "harden the AI workflow: pin actions to commit SHAs, remove "
+                  "pull_request_target where possible, scope agent/Claude permissions, and "
+                  "stop passing long-lived secrets to MCP servers",
+    "packages": "remove or correct each hallucinated/non-existent import and verify "
+                "the real package name on PyPI/npm before installing",
 }
+
+# blast_radius severities → SARIF-style levels used by the renderer.
+_SEV_TO_LEVEL = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning",
+                 "LOW": "note", "INFO": "none"}
 
 _RULES = [
     "- Fix only what each finding lists; do not touch unrelated code.",
@@ -68,6 +79,67 @@ def load(path):
             })
     out.sort(key=lambda f: _RANK.get(f["level"], 9))
     return out
+
+
+def _read_json(path):
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def load_blast_radius(path):
+    """Normalise blast_radius.py --json output. Drops INFO (inventory/registry
+    noise) so the section is actionable."""
+    data = _read_json(path)
+    if data is None:
+        return None
+    out = []
+    for f in data.get("findings", []):
+        sev = (f.get("severity") or "INFO").upper()
+        if sev == "INFO":
+            continue
+        out.append({"level": _SEV_TO_LEVEL.get(sev, "note"), "rule": f.get("rule_id", ""),
+                    "msg": f.get("title", "") or f.get("rule_id", ""),
+                    "rule_obj": {"help": {"text": f.get("fix", "")}},
+                    "file": f.get("file", ""), "line": f.get("line") or ""})
+    out.sort(key=lambda x: _RANK.get(x["level"], 9))
+    return out
+
+
+def load_packages(path):
+    """Normalise check_packages.py --json output (blocked = hallucinated/missing,
+    warnings = could-not-verify)."""
+    data = _read_json(path)
+    if data is None:
+        return None
+    out = []
+    for b in data.get("blocked", []):
+        out.append({"level": "error", "rule": "non-existent-package",
+                    "msg": f"Package '{b.get('package', '')}' not found on "
+                           f"{b.get('registry', '')} — hallucinated / slopsquatting risk",
+                    "rule_obj": {"help": {"text": "Remove or correct the import; verify the "
+                                          "real package name on the registry before installing."}},
+                    "file": b.get("file", ""), "line": 0})
+    for w in data.get("warnings", []):
+        out.append({"level": "note", "rule": "unverified-package",
+                    "msg": f"Could not verify '{w.get('package', '')}' on "
+                           f"{w.get('registry', '')} ({w.get('reason', 'registry unreachable')})",
+                    "rule_obj": {"help": {"text": "Re-run when the registry is reachable."}},
+                    "file": w.get("file", ""), "line": 0})
+    out.sort(key=lambda x: _RANK.get(x["level"], 9))
+    return out
+
+
+def _load_for(scan_type, path):
+    if scan_type == "ai_posture":
+        return load_blast_radius(path)
+    if scan_type == "packages":
+        return load_packages(path)
+    return load(path)
 
 
 def title_and_fix(scan_type, f):
@@ -114,15 +186,19 @@ def _prompt(scan_type, label, lines):
     )
 
 
-def build(scans):
-    """scans = [(type, label, sarif_path)]. Returns the markdown + a log digest."""
-    md = ["## 🔒 Secure AI Pipeline — results", ""]
+def build(scans, section_only=False):
+    """scans = [(type, label, path)]. Returns the markdown + a log digest.
+
+    section_only=True omits the top header and the combined prompt — used when
+    each job in a multi-job workflow contributes its own section to the shared
+    run summary (so the sections concatenate without repeated headers)."""
+    md = [] if section_only else ["## 🔒 Secure AI Pipeline — results", ""]
     log = []
     combined = []  # (label, lines)
     any_findings = False
 
     for scan_type, label, path in scans:
-        findings = load(path)
+        findings = _load_for(scan_type, path)
         if findings is None:
             md += [f"### {label} — not run", ""]
             log.append(f"  [{label}] not run")
@@ -150,18 +226,19 @@ def build(scans):
 
     # Combined prompt is a dropdown too (same as the per-type ones) so it's never
     # a loose visible block that reads as belonging to the section above it.
-    if any_findings:
-        overall = ["You are a senior application-security engineer working in this repository.",
-                   "Task: fix ALL the security findings below, grouped by type.", "",
-                   "Rules:", *_RULES, ""]
-        for label, lines in combined:
-            overall += [f"## {label}", *lines, ""]
-        md += ["---",
-               "<details><summary>🤖 <b>Fix everything</b> — one combined prompt for all "
-               "findings (click to copy)</summary>", "",
-               "```text", "\n".join(overall).rstrip(), "```", "", "</details>"]
-    else:
-        md.append("✅ **All clear** — no findings to fix.")
+    if not section_only:
+        if any_findings:
+            overall = ["You are a senior application-security engineer working in this repository.",
+                       "Task: fix ALL the security findings below, grouped by type.", "",
+                       "Rules:", *_RULES, ""]
+            for label, lines in combined:
+                overall += [f"## {label}", *lines, ""]
+            md += ["---",
+                   "<details><summary>🤖 <b>Fix everything</b> — one combined prompt for all "
+                   "findings (click to copy)</summary>", "",
+                   "```text", "\n".join(overall).rstrip(), "```", "", "</details>"]
+        else:
+            md.append("✅ **All clear** — no findings to fix.")
 
     return "\n".join(md) + "\n", log
 
@@ -169,10 +246,12 @@ def build(scans):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scan", nargs=3, action="append", default=[],
-                   metavar=("TYPE", "LABEL", "SARIF"))
+                   metavar=("TYPE", "LABEL", "PATH"))
+    p.add_argument("--section-only", action="store_true",
+                   help="Omit the top header + combined prompt (one job's section).")
     args = p.parse_args(argv)
 
-    text, log = build(args.scan)
+    text, log = build(args.scan, section_only=args.section_only)
     step = os.environ.get("GITHUB_STEP_SUMMARY")
     if step:
         try:

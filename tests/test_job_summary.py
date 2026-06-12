@@ -107,3 +107,55 @@ def test_main_writes_step_summary_and_exits_zero(tmp_path, monkeypatch):
 
 def test_main_never_fails_on_missing(tmp_path):
     assert js.main(["--scan", "sast", "SAST", str(tmp_path / "nope.sarif")]) == 0
+
+
+# ── AI Blast Radius + anti-slopsquatting sections (the test-repo additions) ──
+
+def test_load_blast_radius_maps_severity_and_drops_info(tmp_path):
+    p = _w(tmp_path, "blast.json", {"findings": [
+        {"severity": "CRITICAL", "rule_id": "gha-prt", "title": "pull_request_target",
+         "fix": "Prefer pull_request.", "file": ".github/workflows/x.yml", "line": 4},
+        {"severity": "MEDIUM", "rule_id": "gha-unpinned", "title": "unpinned",
+         "fix": "Pin to SHA.", "file": "x.yml", "line": 1},
+        {"severity": "INFO", "rule_id": "mcp-inv", "title": "inventory", "fix": "", "file": "m", "line": 0},
+    ]})
+    rows = js.load_blast_radius(p)
+    assert [r["level"] for r in rows] == ["error", "warning"]   # INFO dropped
+    title, fix = js.title_and_fix("ai_posture", rows[0])
+    assert title == "pull_request_target" and fix == "Prefer pull_request."
+
+
+def test_load_packages_blocked_is_error(tmp_path):
+    p = _w(tmp_path, "pkg.json", {
+        "blocked": [{"package": "flaskutils_ai", "import": "flaskutils_ai",
+                     "registry": "pypi", "file": "app.py"}],
+        "warnings": [{"package": "x", "registry": "npm", "file": "x.js", "reason": "unreachable"}],
+        "ok": ["requests"]})
+    rows = js.load_packages(p)
+    assert rows[0]["level"] == "error" and "flaskutils_ai" in rows[0]["msg"]
+    assert rows[1]["level"] == "note"
+    title, fix = js.title_and_fix("packages", rows[0])
+    assert "flaskutils_ai" in title and "verify the real package name" in fix
+
+
+def test_build_renders_blast_radius_and_packages_sections(tmp_path):
+    blast = _w(tmp_path, "b.json", {"findings": [
+        {"severity": "HIGH", "rule_id": "r", "title": "Unpinned action",
+         "fix": "Pin it.", "file": "ci.yml", "line": 2}]})
+    pkgs = _w(tmp_path, "p.json", {"blocked": [
+        {"package": "evilpkg", "registry": "pypi", "file": "app.py"}], "warnings": [], "ok": []})
+    md, _ = js.build([("packages", "Dependency Trust (anti-slopsquatting)", pkgs),
+                     ("ai_posture", "AI Workflow Blast Radius", blast)])
+    assert "Dependency Trust (anti-slopsquatting) — ⚠️" in md
+    assert "AI Workflow Blast Radius — ⚠️" in md
+    assert "evilpkg" in md and "Unpinned action" in md
+    assert "Fix prompt — AI Workflow Blast Radius" in md
+
+
+def test_section_only_omits_header_and_combined_prompt(tmp_path):
+    pkgs = _w(tmp_path, "p.json", {"blocked": [
+        {"package": "evilpkg", "registry": "pypi", "file": "a"}], "warnings": [], "ok": []})
+    md, _ = js.build([("packages", "Dependency Trust", pkgs)], section_only=True)
+    assert "## 🔒 Secure AI Pipeline — results" not in md   # no top header
+    assert "Fix everything" not in md                        # no combined prompt
+    assert "Dependency Trust — ⚠️" in md                     # the section is present
