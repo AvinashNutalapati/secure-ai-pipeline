@@ -9,10 +9,10 @@ from pathlib import Path
 
 from scanners import registry as reg
 from scanners.ci_cd import actionlint, zizmor
-from scanners.iac import checkov
+from scanners.iac import checkov, kics
 from scanners.packages import guarddog
 from scanners.sast import bandit, gosec
-from scanners.sca import grype, pip_audit
+from scanners.sca import grype, npm_audit, pip_audit
 from scanners.secrets import detect_secrets, trufflehog
 
 
@@ -22,9 +22,9 @@ def test_registry_discovers_every_scan_type():
     by_type = {t: [a.name for a in reg.adapters_for(t)] for t in reg.SCAN_TYPE_KEYS}
     assert "trufflehog" in by_type["secrets"] and "gitleaks" in by_type["secrets"]
     assert "guarddog" in by_type["packages"]
-    assert {"trivy", "osv-scanner", "grype", "pip-audit"} <= set(by_type["sca"])
+    assert {"trivy", "osv-scanner", "grype", "pip-audit", "npm-audit"} <= set(by_type["sca"])
     assert {"semgrep", "bandit", "gosec"} <= set(by_type["sast"])
-    assert "checkov" in by_type["iac"]
+    assert {"checkov", "kics"} <= set(by_type["iac"])
     assert {"zizmor", "actionlint"} <= set(by_type["ci_cd"])
     assert "zap" in by_type["dast"]
 
@@ -69,12 +69,12 @@ def test_finding_normalises_severity():
 
 def test_runners_return_none_when_tool_missing(monkeypatch, tmp_path):
     # Every adapter checks _which on its own module import of external_tools.
-    for mod in (trufflehog, detect_secrets, grype, pip_audit, bandit, gosec,
-                guarddog, checkov, zizmor, actionlint):
+    for mod in (trufflehog, detect_secrets, grype, pip_audit, npm_audit, bandit,
+                gosec, guarddog, checkov, kics, zizmor, actionlint):
         monkeypatch.setattr(mod, "_which", lambda name: None)
     ctx = reg.ScanContext(root=tmp_path)
-    for mod in (trufflehog, detect_secrets, grype, pip_audit, bandit, gosec,
-                guarddog, checkov, zizmor, actionlint):
+    for mod in (trufflehog, detect_secrets, grype, pip_audit, npm_audit, bandit,
+                gosec, guarddog, checkov, kics, zizmor, actionlint):
         assert mod.run(ctx) is None, f"{mod.__name__} should degrade to None"
 
 
@@ -132,6 +132,21 @@ def test_pip_audit_both_output_shapes():
         {"id": "PYSEC-2", "fix_versions": [], "description": "x"}]}]
     out2 = pip_audit.parse(older)
     assert out2[0]["severity"] == "HIGH" and "No fixed version" in out2[0]["fix"]
+
+
+def test_npm_audit_parses_vulnerabilities():
+    data = {"vulnerabilities": {
+        "lodash": {"name": "lodash", "severity": "high", "range": "<4.17.21",
+                   "via": [{"title": "Prototype Pollution", "url": "https://x", "severity": "high"}],
+                   "fixAvailable": {"name": "lodash", "version": "4.17.21"}},
+        "minimist": {"name": "minimist", "severity": "moderate", "range": "<1.2.6",
+                     "via": ["lodash"], "fixAvailable": True}}}
+    out = npm_audit.parse(data, source="package-lock.json")
+    lod = [f for f in out if "lodash" in f["title"]][0]
+    assert lod["severity"] == "HIGH" and "4.17.21" in lod["fix"]
+    mini = [f for f in out if "minimist" in f["title"]][0]
+    assert mini["severity"] == "MEDIUM" and "npm audit fix" in mini["fix"]  # moderate→MEDIUM
+    assert all(f["tool"] == "npm-audit" for f in out)
 
 
 # ── sast ─────────────────────────────────────────────────────────────────────
@@ -194,6 +209,19 @@ def test_checkov_dict_and_multiframework_list():
         {"check_type": "terraform", "results": {"failed_checks": []}}]
     out2 = checkov.parse(multi)
     assert len(out2) == 1 and out2[0]["severity"] == "MEDIUM"  # no severity → default
+
+
+def test_kics_parses_sarif():
+    sarif = {"runs": [{"tool": {"driver": {"rules": [
+        {"id": "k1", "defaultConfiguration": {"level": "error"}}]}},
+        "results": [{"ruleId": "k1", "level": "error",
+                     "message": {"text": "S3 bucket allows public access"},
+                     "locations": [{"physicalLocation": {
+                         "artifactLocation": {"uri": "main.tf"},
+                         "region": {"startLine": 5}}}]}]}]}
+    out = kics.parse(sarif)
+    assert out[0]["severity"] == "HIGH" and out[0]["tool"] == "kics"
+    assert out[0]["file"] == "main.tf" and out[0]["line"] == 5
 
 
 # ── ci_cd ────────────────────────────────────────────────────────────────────

@@ -54,7 +54,7 @@ Push it (or run it from the **Actions** tab) and on every push / PR you get —
 **with nothing installed locally** — a whole stack of OSS scanners run for you and
 **consolidated per scan type**: Secrets (Gitleaks · TruffleHog · detect-secrets),
 SAST (Semgrep · Bandit · gosec + AI-specific rules), Dependencies (Trivy · OSV ·
-Grype · pip-audit), Dependency Trust (anti-slopsquatting · GuardDog), IaC (Checkov),
+Grype · pip-audit · npm-audit), Dependency Trust (anti-slopsquatting · GuardDog), IaC (Checkov),
 CI/CD workflows (zizmor · actionlint), and the AI workflow blast-radius check.
 Results land in a **job summary**: one table per scan type (severity, finding,
 location, suggested fix — including the dependency's fixed version) plus
