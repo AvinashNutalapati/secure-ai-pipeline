@@ -5,7 +5,7 @@ info:
     Security scanner for AI-generated code. Verifies package names against public
     registries (anti-slopsquatting), scans snippets for insecure defaults, and
     reports known CVEs in pinned dependencies. All operations are read-only.
-  version: 3.2.0
+  version: 3.2.1
 servers:
   # GPT Actions require a public HTTPS host. This is the Render deployment of
   # extensions/claude_mcp/server.py behind the custom domain (see
