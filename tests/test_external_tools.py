@@ -13,6 +13,16 @@ def test_detect_returns_known_tools():
     assert set(d) == {"gitleaks", "semgrep", "trivy", "osv-scanner", "docker"}
 
 
+def test_default_timeout_is_generous(monkeypatch):
+    # Generous (10 min) so a slow scan on a big repo isn't cut off; overridable.
+    monkeypatch.delenv("SAP_TOOL_TIMEOUT", raising=False)
+    assert ext._default_timeout() == 600
+    monkeypatch.setenv("SAP_TOOL_TIMEOUT", "120")
+    assert ext._default_timeout() == 120
+    monkeypatch.setenv("SAP_TOOL_TIMEOUT", "notanint")
+    assert ext._default_timeout() == 600
+
+
 def test_norm_sev_aliases():
     assert ext._norm_sev("ERROR") == "HIGH"
     assert ext._norm_sev("warning") == "MEDIUM"

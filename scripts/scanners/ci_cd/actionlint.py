@@ -17,8 +17,8 @@ from typing import Optional
 from external_tools import _run, _which
 from scanners.registry import ScanContext, ToolAdapter, finding, register
 
-_INSTALL = ("brew install actionlint   (or: bash <(curl -s "
-            "https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash))")
+_INSTALL = ("brew install actionlint   (or: curl -s https://raw.githubusercontent.com/rhysd/"
+            "actionlint/main/scripts/download-actionlint.bash | bash)")
 
 # Injection/untrusted-input findings are the security-critical ones.
 _HIGH_HINTS = ("inject", "untrusted", "${{", "shellcheck")
@@ -61,6 +61,8 @@ def run(ctx: ScanContext) -> Optional[list]:
 
 register(ToolAdapter(name="actionlint", scan_type="ci_cd", binary="actionlint",
                      run=run, install=_INSTALL,
-                     ci_install="bash <(curl -s https://raw.githubusercontent.com/rhysd/"
-                                "actionlint/main/scripts/download-actionlint.bash) && "
-                                "sudo mv actionlint /usr/local/bin/"))
+                     # Pipe into `bash` (not the process-substitution `bash <(...)`,
+                     # which is a syntax error under /bin/sh=dash on CI). The script
+                     # takes [version] [dir]; install straight to /usr/local/bin.
+                     ci_install="curl -s https://raw.githubusercontent.com/rhysd/actionlint/"
+                                "main/scripts/download-actionlint.bash | bash -s -- latest /usr/local/bin"))

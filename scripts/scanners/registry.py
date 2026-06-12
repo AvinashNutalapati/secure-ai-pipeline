@@ -24,7 +24,10 @@ stdlib only.
 
 from __future__ import annotations
 
+import fnmatch
+import functools
 import importlib
+import json
 import pkgutil
 import shutil
 from dataclasses import dataclass, field
@@ -105,6 +108,7 @@ class ScanContext:
     dast_url: str = ""
     semgrep_ruleset: Optional[Path] = None
     zap_rules: Optional[Path] = None
+    policy: Optional[dict] = None   # the repo's secure-ai-pipeline.yml (for ai_posture)
 
 
 @dataclass
@@ -148,13 +152,56 @@ def finding(severity: str, title: str, detail: str = "", file: str = "",
             "file": file, "line": int(line or 0), "fix": fix, "tool": tool}
 
 
-def has_files(root: Path, *patterns: str) -> bool:
-    """True if any file matching a glob exists under root (skipping vendor dirs).
-    Lets an adapter cheaply skip itself when the repo has nothing for it to scan."""
+@functools.lru_cache(maxsize=8)
+def _basename_index(root_str: str) -> frozenset:
+    """Every non-vendored file basename under root, walked ONCE and cached, so the
+    N adapters that gate on has_files() share one traversal instead of N. Cleared
+    per scan (clear_file_index) so it can't go stale across runs in a long-lived
+    process (the MCP server)."""
     from scanners.base import skip
-    for pat in patterns:
-        for p in Path(root).rglob(pat):
-            if p.is_file() and not skip(p):
+    root = Path(root_str)
+    return frozenset(p.name for p in root.rglob("*") if p.is_file() and not skip(p))
+
+
+def clear_file_index() -> None:
+    """Drop the cached file index — call at the start of each scan."""
+    _basename_index.cache_clear()
+
+
+def run_json(ctx, argv: list, parse, *, gate=None, cwd=None):
+    """The standard adapter body for a tool that prints JSON on stdout: optionally
+    gate on the repo containing the right files, run ``argv`` (non-zero exit is
+    fine — tools exit non-zero when they find issues), json.loads the stdout, and
+    hand it to ``parse``. Returns [] when the gate fails or the output isn't
+    parseable. The CALLER checks ``_which(binary)`` first (so a test that patches
+    the adapter's _which can still simulate the tool being absent → None)."""
+    if gate and not has_files(ctx.root, *gate):
+        return []
+    proc = _ext._run(argv, cwd=cwd)
+    if proc is None:
+        return []
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except (json.JSONDecodeError, ValueError):
+        return []
+    return parse(data)
+
+
+def has_files(root, *patterns: str) -> bool:
+    """True if any file matching a basename glob exists under root (skipping vendor
+    dirs). Lets an adapter cheaply skip itself when the repo has nothing to scan.
+    Patterns are basename globs (`*.py`, `requirements*.txt`, `Gemfile`); a pattern
+    containing `/` falls back to a direct rglob."""
+    root = Path(root)
+    simple = [p for p in patterns if "/" not in p]
+    if simple:
+        names = _basename_index(str(root))
+        if any(fnmatch.fnmatch(n, pat) for pat in simple for n in names):
+            return True
+    if len(simple) != len(patterns):  # rare: a path-shaped pattern
+        from scanners.base import skip
+        for pat in patterns:
+            if "/" in pat and any(p.is_file() and not skip(p) for p in root.rglob(pat)):
                 return True
     return False
 

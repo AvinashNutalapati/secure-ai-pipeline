@@ -193,7 +193,10 @@ def builtin_sca(root: Path, offline: bool) -> list:
         if check_packages._skip(req):
             continue
         for f in rp.stage1_sca(req):
-            if f.rule_id in ("requirements-not-found",):
+            # Drop the path-missing note and the "verify on PyPI" note: the latter
+            # has no real CVE/fix (so the '(fix: …)' extraction below would mislabel
+            # it "Upgrade to a patched release") and is the packages layer's job.
+            if f.rule_id in ("requirements-not-found", "unknown-package-in-requirements"):
                 continue
             m = re.search(r"\(fix:\s*([^)]+)\)", f.message)
             fixtext = f"Upgrade to {m.group(1).strip()}." if m else \
@@ -214,15 +217,17 @@ def _from_ext(scan_type: str, rows: list) -> list:
                         r.get("fix", ""), r.get("tool", "")) for r in rows]
 
 
-# Per-scan-type built-in fallback policy. Each entry: (fn(root, offline) ->
-# list[ScanFinding], always). always=True runs the built-in even when an external
-# tool ran — slopsquatting + curated CVEs cover ground no OSS tool does; always=
-# False uses the built-in only when no external scanner for that type is installed.
+# Per-scan-type built-in fallback policy. Each entry: (fn(ctx) -> list[ScanFinding],
+# always). always=True runs the built-in even when an external tool ran (slopsquatting
+# + curated CVEs + the AI blast radius cover ground no OSS tool does); always=False
+# uses the built-in only when no external scanner for that type is installed. Every
+# fn takes the ScanContext so the policy is uniform (no root/offline-vs-ctx split).
 BUILTIN_FALLBACK = {
-    "secrets":  (lambda root, offline: builtin_secrets(root), False),
-    "packages": (builtin_packages, True),
-    "sca":      (builtin_sca, True),
-    "sast":     (lambda root, offline: builtin_sast(root), False),
+    "secrets":    (lambda ctx: builtin_secrets(ctx.root), False),
+    "packages":   (lambda ctx: builtin_packages(ctx.root, ctx.offline), True),
+    "sca":        (lambda ctx: builtin_sca(ctx.root, ctx.offline), True),
+    "sast":       (lambda ctx: builtin_sast(ctx.root), False),
+    "ai_posture": (lambda ctx: builtin_ai_posture(ctx), True),
 }
 
 
@@ -259,7 +264,7 @@ def _assemble_layer(scan_type: str, ext_results: list, ctx: "registry.ScanContex
     if fb:
         fn, always = fb
         if always or not engines:
-            findings += fn(ctx.root, ctx.offline)
+            findings += fn(ctx)
             engines.append("built-in")
 
     # When no real OSS tool ran (built-in-only, or nothing), point at what to install.
@@ -274,24 +279,30 @@ def _assemble_layer(scan_type: str, ext_results: list, ctx: "registry.ScanContex
     return Layer(scan_type, engine, findings, note=note)
 
 
-def run_ai_posture(root: Path, pol: dict) -> Layer:
-    # Apply the repo's secure-ai-pipeline.yml policy so this layer matches the
-    # standalone `posture` command (path excludes, rule ignores, MCP allowlist).
-    report = policy_mod.apply(br.assess(root, offline=True), pol)
-    rows = [ScanFinding("ai_posture", f["severity"], f["title"], f.get("detail", ""),
+def builtin_ai_posture(ctx: "registry.ScanContext") -> list:
+    # The AI Agent Blast Radius checkup (MCP/IDE/Claude/Actions posture). Applies
+    # the repo's secure-ai-pipeline.yml policy so this matches the standalone
+    # `posture` command (path excludes, rule ignores, MCP allowlist). Runs as the
+    # ai_posture built-in fallback; external ai_posture adapters merge alongside it.
+    report = policy_mod.apply(br.assess(ctx.root, offline=True), ctx.policy or {})
+    return [ScanFinding("ai_posture", f["severity"], f["title"], f.get("detail", ""),
                         f.get("file", ""), int(f.get("line") or 0), f.get("fix", ""), "built-in")
             for f in report["findings"]]
-    return Layer("ai_posture", "built-in", rows)
 
 
 def run_dast(url: str, ctx: "registry.ScanContext") -> Layer:
     ctx.dast_url = url
-    for adapter in registry.adapters_for("dast"):
+    findings, engines = [], []
+    for adapter in registry.available_adapters("dast"):
         rows = adapter.run(ctx)
-        if rows is not None:
-            return Layer("dast", adapter.name, _from_ext("dast", rows), note=f"target: {url}")
-    return Layer("dast", "unavailable", [],
-                 note=f"install ZAP or Docker to run DAST — {ext.INSTALL_HINTS['docker']}")
+        if rows is None:
+            continue
+        findings += _from_ext("dast", rows)
+        engines.append(adapter.name)
+    if not engines:
+        return Layer("dast", "unavailable", [],
+                     note=f"install ZAP or Docker to run DAST — {ext.INSTALL_HINTS['docker']}")
+    return Layer("dast", " + ".join(dict.fromkeys(engines)), findings, note=f"target: {url}")
 
 
 def _scan_context(root: Path, offline: bool, dast_url: str = "") -> "registry.ScanContext":
@@ -307,6 +318,8 @@ def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
     pol = policy_mod.load_policy(root)
     excludes = list(pol.get("exclude", []) or []) + list(exclude or [])
     ctx = _scan_context(root, offline, dast_url)
+    ctx.policy = pol            # ai_posture's built-in applies it
+    registry.clear_file_index()  # fresh file-listing for this scan (the has_files cache)
 
     # Default set: every non-DAST type that has a built-in OR an installed tool.
     # iac/ci_cd therefore appear automatically once checkov/zizmor are on PATH
@@ -316,7 +329,7 @@ def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
         selected = [t for t in TABLE_ORDER if t in only]
     else:
         selected = [t for t in TABLE_ORDER if t != "dast" and (
-            t in BUILTIN_FALLBACK or t == "ai_posture" or registry.available_adapters(t))]
+            t in BUILTIN_FALLBACK or registry.available_adapters(t))]
 
     # Run every external scanner across all selected types CONCURRENTLY (each is a
     # subprocess, so threads give real parallelism). Running ~10 tools one after
@@ -350,19 +363,9 @@ def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
                 ext_results[t].append((a.name, rows))
                 _progress(f"    ✓ {a.name} ({t}) — {len(rows)} finding(s), {elapsed:.0f}s")
 
-    layers: dict = {}
-    for t in selected:
-        if t == "ai_posture":
-            # Built-in blast radius (policy-applied) + any external ai_posture
-            # adapters (e.g. mcp-scan) that ran in the parallel phase.
-            _progress("  ▶ ai_posture — AI workflow blast radius (built-in)")
-            layer = run_ai_posture(root, pol)
-            for name, rows in ext_results.get("ai_posture", []):
-                layer.findings += _from_ext("ai_posture", rows)
-                layer.engine = f"{layer.engine} + {name}" if layer.engine else name
-            layers[t] = layer
-        else:
-            layers[t] = _assemble_layer(t, ext_results.get(t, []), ctx)
+    # ai_posture goes through the same path now: its built-in (blast radius,
+    # always=True) plus any external ai_posture adapters that ran, merged.
+    layers: dict = {t: _assemble_layer(t, ext_results.get(t, []), ctx) for t in selected}
     if dast_url:
         layers["dast"] = run_dast(dast_url, ctx)
 
@@ -466,6 +469,16 @@ def render_compact(result: dict, no_color: bool = False, group_cap: int = 12) ->
     return "\n".join(out)
 
 
+def _first_line(s: str, limit: int = 300) -> str:
+    """First non-blank line of s, truncated. Safe on empty/whitespace-only input
+    (`'\\n'.strip().splitlines()[0]` is an IndexError; this returns '')."""
+    for ln in (s or "").splitlines():
+        ln = ln.strip()
+        if ln:
+            return ln[:limit]
+    return ""
+
+
 def render_detail(result: dict, scan_type: str, no_color: bool = False) -> str:
     on = _color_on(no_color)
     lyr = result["layers"].get(scan_type)
@@ -481,10 +494,12 @@ def render_detail(result: dict, scan_type: str, no_color: bool = False) -> str:
         out.append(f"  {_c(f.severity, '● ' + f.severity, on)}  {f.title}")
         if loc:
             out.append(_c("DIM", f"      {loc}", on))
-        if f.detail:
-            out.append(f"      {f.detail.strip().splitlines()[0][:300]}")
-        if f.fix:
-            out.append(_c("OK", f"      fix: {f.fix.strip().splitlines()[0][:300]}", on))
+        detail = _first_line(f.detail)
+        if detail:
+            out.append(f"      {detail}")
+        fix = _first_line(f.fix)
+        if fix:
+            out.append(_c("OK", f"      fix: {fix}", on))
         out.append("")
     return "\n".join(out)
 
@@ -528,8 +543,9 @@ def fix_prompt(scan_type: str, findings: list, root: str) -> str:
     for f in sorted(findings, key=lambda x: (_RANK.get(x.severity, 9), x.file)):
         loc = f"{f.file}:{f.line}" if f.line else (f.file or "—")
         lines.append(f"- **[{f.severity}]** {f.title}  ({loc})")
-        if f.fix:
-            lines.append(f"  - suggested: {f.fix.strip().splitlines()[0]}")
+        fix = _first_line(f.fix, limit=10_000)
+        if fix:
+            lines.append(f"  - suggested: {fix}")
     lines.append("")
     return "\n".join(lines)
 
@@ -569,7 +585,7 @@ def render_html(result: dict) -> str:
             loc = html.escape(f.file + (f":{f.line}" if f.line else ""))
             rows += (f'<tr><td><span class="sev" style="background:{sev_color.get(f.severity,"#888")}">'
                      f'{f.severity}</span></td><td>{html.escape(f.title)}'
-                     f'<div class="d">{html.escape((f.detail or "").splitlines()[0] if f.detail else "")}</div>'
+                     f'<div class="d">{html.escape(_first_line(f.detail))}</div>'
                      f'<div class="fx">{html.escape(f.fix)}</div></td>'
                      f'<td class="loc">{loc}</td></tr>')
         if not rows:

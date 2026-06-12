@@ -9,11 +9,10 @@ stdlib only.
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
-from external_tools import _run, _which
-from scanners.registry import ScanContext, ToolAdapter, finding, register
+from external_tools import _which
+from scanners.registry import ScanContext, ToolAdapter, finding, register, run_json
 
 _INSTALL = "pip install detect-secrets"
 
@@ -40,14 +39,7 @@ def run(ctx: ScanContext) -> Optional[list]:
     if not _which("detect-secrets"):
         return None
     # `scan <path>` walks the tree and prints a baseline JSON to stdout.
-    proc = _run(["detect-secrets", "scan", str(ctx.root)])
-    if proc is None:
-        return []
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
-    return parse(data)
+    return run_json(ctx, ["detect-secrets", "scan", str(ctx.root)], parse)
 
 
 register(ToolAdapter(name="detect-secrets", scan_type="secrets", binary="detect-secrets",

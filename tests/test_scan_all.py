@@ -69,6 +69,26 @@ def test_builtin_sca_curated_cve(tmp_path):
     assert any("CVE-2023-30861" in f.detail for f in findings)
 
 
+def test_builtin_sca_drops_unknown_package_note(tmp_path):
+    # An unverifiable package must NOT show in SCA with a bogus "Upgrade to a
+    # patched release" fix — that's the packages layer's job (regression).
+    _w(tmp_path, "requirements.txt", "totallyfakepkg==1.0\n")
+    findings = sa.builtin_sca(tmp_path, offline=True)
+    assert findings == []
+
+
+def test_render_handles_whitespace_only_fix(tmp_path):
+    # A finding whose fix/detail is whitespace-only must not crash any renderer
+    # (regression: `'\\n'.strip().splitlines()[0]` was an IndexError).
+    f = sa.ScanFinding("sast", "HIGH", "x", "  \n ", "a.py", 1, "\n  ", "tool")
+    result = {"root": str(tmp_path), "layers": {"sast": sa.Layer("sast", "tool", [f])},
+              "tools": {}}
+    sa.render_detail(result, "sast", no_color=True)
+    sa.render_html(result)
+    sa.fix_prompt("sast", [f], str(tmp_path))
+    sa.write_fix_prompts(result, tmp_path / ".sap")    # the default-run path
+
+
 # ── orchestration ────────────────────────────────────────────────────────────
 
 def test_orchestrate_only_subset(tmp_path):

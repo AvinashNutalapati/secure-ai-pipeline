@@ -56,6 +56,42 @@ def test_available_adapters_excludes_heavy_unless_requested():
         reg._ADAPTERS.pop("fake-heavy-xyz", None)
 
 
+def test_ci_install_commands_are_sh_safe():
+    # install_scanners runs ci_install via subprocess shell=True → /bin/sh (dash on
+    # CI), which can't parse bash process substitution `<(...)` (the actionlint bug).
+    for a in reg.all_adapters():
+        assert "<(" not in (a.ci_install or ""), f"{a.name}: ci_install needs bash-only syntax"
+
+
+def test_has_files_index(tmp_path):
+    reg.clear_file_index()
+    (tmp_path / "a.py").write_text("x", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.go").write_text("x", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "c.rb").write_text("x", encoding="utf-8")  # vendored
+    assert reg.has_files(tmp_path, "*.py")          # top-level
+    assert reg.has_files(tmp_path, "*.go")          # nested
+    assert not reg.has_files(tmp_path, "*.rb")      # only inside node_modules → skipped
+    assert reg.has_files(tmp_path, "*.rb", "*.py")  # any-of
+
+
+def test_run_json_gate_and_parse(tmp_path, monkeypatch):
+    import external_tools as ext
+    ctx = reg.ScanContext(root=tmp_path)
+    reg.clear_file_index()
+    # gate fails (no matching file) → [] without running anything
+    assert reg.run_json(ctx, ["x"], lambda d: ["F"], gate=("*.nope",)) == []
+
+    class _P:
+        stdout = '{"k": 7}'
+    monkeypatch.setattr(ext, "_run", lambda argv, cwd=None: _P())
+    assert reg.run_json(ctx, ["x"], lambda d: [d["k"]]) == [7]
+    # unparseable stdout → [] (never raises)
+    monkeypatch.setattr(ext, "_run", lambda argv, cwd=None: type("P", (), {"stdout": "not json"})())
+    assert reg.run_json(ctx, ["x"], lambda d: ["F"]) == []
+
+
 def test_register_rejects_unknown_scan_type():
     import pytest
     with pytest.raises(ValueError):

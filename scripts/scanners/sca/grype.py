@@ -9,11 +9,10 @@ stdlib only.
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
-from external_tools import _run, _which
-from scanners.registry import ScanContext, ToolAdapter, finding, register
+from external_tools import _which
+from scanners.registry import ScanContext, ToolAdapter, finding, register, run_json
 
 _INSTALL = ("brew install grype   (or: curl -sSfL "
             "https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh)")
@@ -47,14 +46,7 @@ def parse(data) -> list:
 def run(ctx: ScanContext) -> Optional[list]:
     if not _which("grype"):
         return None
-    proc = _run(["grype", f"dir:{ctx.root}", "-o", "json", "-q"])
-    if proc is None:
-        return []
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
-    return parse(data)
+    return run_json(ctx, ["grype", f"dir:{ctx.root}", "-o", "json", "-q"], parse)
 
 
 register(ToolAdapter(name="grype", scan_type="sca", binary="grype",

@@ -193,6 +193,25 @@ def test_build_merges_scan_all_into_sections(tmp_path):
     assert "Infrastructure as Code" in md and "S3 bucket public" in md
 
 
+def test_secrets_deduped_by_location(tmp_path):
+    # The same leaked secret found by two tools (gitleaks SARIF + trufflehog via
+    # --scan-all) at one file:line must show ONCE, despite different wording.
+    sarif = _w(tmp_path, "gl.sarif", _sarif([_result(
+        "gitleaks", "error", "AWS Access Key", "x.env", 12)]))
+    scan_all = js.load_scan_all(_w(tmp_path, "scan.json", {"layers": {
+        "secrets": {"engine": "trufflehog", "findings": [
+            {"severity": "CRITICAL", "title": "Verified secret: AWS", "fix": "rotate it",
+             "file": "x.env", "line": 12, "tool": "trufflehog"}]}}}))
+    md, _ = js.build([("secrets", "Secrets", sarif)], scan_all=scan_all)
+    assert "Secrets — ⚠️ 1 finding(s)" in md         # 2 tools → deduped to 1
+    # Two DIFFERENT issues at the same line are NOT collapsed (only secrets dedup
+    # by location; other types keep distinct messages).
+    two = js.build([("sast", "SAST", _w(tmp_path, "s.sarif", _sarif([
+        _result("r1", "error", "issue one", "a.py", 5),
+        _result("r2", "error", "issue two", "a.py", 5)])))])[0]
+    assert "SAST — ⚠️ 2 finding(s)" in two
+
+
 def test_section_only_omits_header_and_combined_prompt(tmp_path):
     pkgs = _w(tmp_path, "p.json", {"blocked": [
         {"package": "evilpkg", "registry": "pypi", "file": "a"}], "warnings": [], "ok": []})

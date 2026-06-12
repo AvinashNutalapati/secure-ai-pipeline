@@ -115,7 +115,11 @@ RULES = [
             "          metavariable: $KEY\n"
             "          regex: (?i)(api_key|secret|password|token|passwd|auth_key|access_key)\n"
         ),
-        "js": {"trigger": r"\b(api_key|secret|password|passwd|token|auth_key|access_key)\s*=\s*[\"'][^\"']{8,}[\"']",
+        # No leading \b: it sits between '_' and the keyword in UPPER_SNAKE names
+        # (OPENAI_API_KEY, DB_PASSWORD, AWS_SECRET) and would never match them.
+        # Matching the keyword anywhere in the identifier mirrors the Semgrep
+        # metavariable-regex above, which has no boundary either.
+        "js": {"trigger": r"(api_key|secret|password|passwd|token|auth_key|access_key)\s*=\s*[\"'][^\"']{8,}[\"']",
                "target": r"[\"'][^\"']{8,}[\"']", "flags": "i"},
     },
     {

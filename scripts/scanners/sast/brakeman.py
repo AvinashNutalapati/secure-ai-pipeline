@@ -9,11 +9,10 @@ stdlib only.
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
-from external_tools import _run, _which
-from scanners.registry import ScanContext, ToolAdapter, finding, has_files, register
+from external_tools import _which
+from scanners.registry import ScanContext, ToolAdapter, finding, register, run_json
 
 _INSTALL = "gem install brakeman"
 
@@ -41,16 +40,8 @@ def parse(data) -> list:
 def run(ctx: ScanContext) -> Optional[list]:
     if not _which("brakeman"):
         return None
-    if not has_files(ctx.root, "Gemfile", "*.rb"):
-        return []
-    proc = _run(["brakeman", "-f", "json", "-q", "--no-progress", str(ctx.root)])
-    if proc is None:
-        return []
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
-    return parse(data)
+    return run_json(ctx, ["brakeman", "-f", "json", "-q", "--no-progress", str(ctx.root)],
+                    parse, gate=("Gemfile", "*.rb"))
 
 
 register(ToolAdapter(name="brakeman", scan_type="sast", binary="brakeman",

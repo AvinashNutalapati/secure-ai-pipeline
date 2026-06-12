@@ -36,30 +36,16 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 # ── Stdlib packages that are never on PyPI ──────────────────────────────────
-PYTHON_STDLIB = {
-    "os", "sys", "re", "io", "abc", "ast", "csv", "json", "math", "time",
-    "enum", "copy", "uuid", "hmac", "hash", "stat", "glob", "shutil",
-    "queue", "array", "heapq", "struct", "socket", "select", "signal",
-    "string", "struct", "random", "logging", "hashlib", "pathlib", "urllib",
-    "fnmatch", "linecache", "filecmp", "fileinput", "difflib", "bisect",
-    "typing", "decimal", "inspect", "functools", "itertools", "datetime",
-    "calendar", "textwrap", "threading", "multiprocessing", "subprocess",
-    "contextlib", "collections", "dataclasses", "configparser", "http",
-    "html", "xml", "email", "smtplib", "ftplib", "telnetlib", "ssl",
-    "base64", "binascii", "codecs", "pickle", "shelve", "sqlite3", "zlib",
-    "gzip", "bz2", "lzma", "zipfile", "tarfile", "tempfile", "platform",
-    "traceback", "warnings", "unittest", "doctest", "pdb", "profile",
-    "timeit", "argparse", "getopt", "getpass", "readline", "rlcompleter",
-    "curses", "tkinter", "webbrowser", "gc", "weakref", "ctypes",
-    "concurrent", "asyncio", "selectors", "mmap", "msvcrt", "winreg",
-    "winsound", "posix", "pwd", "grp", "termios", "tty", "pty", "fcntl",
-    "pipes", "resource", "syslog", "optparse", "imp", "importlib",
-    "builtins", "__future__", "types", "numbers", "fractions", "cmath",
-    "statistics", "secrets", "token", "tokenize", "keyword", "dis",
-    "marshal", "compileall", "py_compile", "zipimport", "pkgutil",
-    "modulefinder", "runpy", "site", "sysconfig", "venv", "ensurepip",
-    "shlex", "operator", "errno", "locale", "unicodedata", "pprint",
-    "atexit", "ipaddress", "zoneinfo", "graphlib", "sched", "wave",
+# Use the running Python's own authoritative stdlib list (sys.stdlib_module_names,
+# 3.10+): complete and version-accurate, so the guard never false-blocks a real
+# stdlib import. A hand-maintained set silently omitted modules (socketserver,
+# wsgiref, xmlrpc, tomllib, contextvars, …) and reported them as hallucinated.
+# Union a handful of removed-but-historically-valid names so older code still
+# scans clean on newer interpreters.
+PYTHON_STDLIB = set(sys.stdlib_module_names) | {
+    "imp", "telnetlib", "cgi", "cgitb", "nntplib", "smtpd", "asynchat", "asyncore",
+    "audioop", "chunk", "crypt", "imghdr", "mailcap", "msilib", "nis", "ossaudiodev",
+    "pipes", "sndhdr", "spwd", "sunau", "uu", "xdrlib",
 }
 
 # ── Import name → PyPI distribution name (common mismatches) ─────────────────

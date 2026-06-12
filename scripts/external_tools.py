@@ -81,11 +81,14 @@ def _norm_sev(value: str, default: str = "MEDIUM") -> str:
 
 def _default_timeout() -> int:
     """Per-tool wall-clock cap. Bounded so one slow/hung scanner can't stall the
-    whole job; override with SAP_TOOL_TIMEOUT (seconds)."""
+    whole job, but generous (10 min) so a legitimately slow scan on a large repo
+    (Trivy/Semgrep DB build, big monorepo) isn't cut off and its findings dropped.
+    Tools run in parallel, so this is a per-tool cap, not the total. Override with
+    SAP_TOOL_TIMEOUT (seconds)."""
     try:
-        return int(os.environ.get("SAP_TOOL_TIMEOUT", "300"))
+        return int(os.environ.get("SAP_TOOL_TIMEOUT", "600"))
     except ValueError:
-        return 300
+        return 600
 
 
 def _run(cmd: list, timeout: Optional[int] = None, cwd=None) -> Optional[subprocess.CompletedProcess]:

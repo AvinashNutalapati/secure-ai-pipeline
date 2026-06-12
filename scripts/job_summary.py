@@ -215,12 +215,18 @@ def _prompt(scan_type, label, lines):
     )
 
 
-def _dedup(findings):
-    """Collapse identical findings (same level/message/location) so that two
-    tools reporting the exact same issue show once. Different wording stays."""
+def _dedup(findings, scan_type=""):
+    """Collapse duplicate findings so two tools reporting the same issue show once.
+    For secrets, the same (file, line) is the same leaked credential regardless of
+    how the tool worded it (gitleaks's SARIF vs trufflehog via --scan-all), so we
+    dedup on location there; otherwise key on the full (level, msg, file, line) so
+    distinct issues at one line (e.g. two SAST rules) both stay."""
     seen, out = set(), []
     for f in findings:
-        key = (f.get("level"), f.get("msg"), f.get("file"), f.get("line"))
+        if scan_type == "secrets" and f.get("file") and f.get("line"):
+            key = ("secret", f.get("file"), f.get("line"))
+        else:
+            key = (f.get("level"), f.get("msg"), f.get("file"), f.get("line"))
         if key in seen:
             continue
         seen.add(key)
@@ -276,7 +282,7 @@ def build(scans, section_only=False, scan_all=None):
             md += [f"### {label} — not run", ""]
             log.append(f"  [{label}] not run")
             continue
-        findings = _dedup(findings)
+        findings = _dedup(findings, scan_type)
         if not findings:
             md += [f"### {label} — ✅ no findings", ""]
             log.append(f"  [{label}] ✅ no findings")

@@ -8,7 +8,7 @@
   "files": [
     "cli/",
     "scripts/*.py",
-    "scripts/scanners/*.py",
+    "scripts/scanners/**/*.py",
     ".semgrep/",
     ".zap/",
     ".pre-commit-config.yaml",

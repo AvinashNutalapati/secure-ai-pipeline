@@ -9,11 +9,10 @@ stdlib only.
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
-from external_tools import _run, _which
-from scanners.registry import ScanContext, ToolAdapter, finding, has_files, register
+from external_tools import _which
+from scanners.registry import ScanContext, ToolAdapter, finding, register, run_json
 
 _INSTALL = "pip install bandit"
 
@@ -39,17 +38,9 @@ def parse(data) -> list:
 def run(ctx: ScanContext) -> Optional[list]:
     if not _which("bandit"):
         return None
-    if not has_files(ctx.root, "*.py"):
-        return []
     # -r recurse, -f json to stdout, -q quiet. Non-zero exit on findings is fine.
-    proc = _run(["bandit", "-r", str(ctx.root), "-f", "json", "-q"])
-    if proc is None:
-        return []
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
-    return parse(data)
+    return run_json(ctx, ["bandit", "-r", str(ctx.root), "-f", "json", "-q"],
+                    parse, gate=("*.py",))
 
 
 register(ToolAdapter(name="bandit", scan_type="sast", binary="bandit",

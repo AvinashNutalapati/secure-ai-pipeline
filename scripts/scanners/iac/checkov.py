@@ -10,11 +10,10 @@ stdlib only.
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
-from external_tools import _run, _which
-from scanners.registry import ScanContext, ToolAdapter, finding, register
+from external_tools import _which
+from scanners.registry import ScanContext, ToolAdapter, finding, register, run_json
 
 _INSTALL = "pip install checkov"
 
@@ -47,15 +46,8 @@ def parse(data) -> list:
 def run(ctx: ScanContext) -> Optional[list]:
     if not _which("checkov"):
         return None
-    proc = _run(["checkov", "-d", str(ctx.root), "-o", "json",
-                 "--compact", "--quiet"])
-    if proc is None:
-        return []
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
-    return parse(data)
+    return run_json(ctx, ["checkov", "-d", str(ctx.root), "-o", "json",
+                          "--compact", "--quiet"], parse)
 
 
 register(ToolAdapter(name="checkov", scan_type="iac", binary="checkov",

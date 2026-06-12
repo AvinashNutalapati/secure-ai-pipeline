@@ -76,3 +76,13 @@ def test_requirements_parser_accepts_dotted_names():
     assert rules.parse_requirements("zope.interface==5.0\n") == [
         ("zope.interface", "5.0")
     ]
+
+
+def test_sast_catches_uppercase_secret_names():
+    # Regression: a leading \b in the trigger used to miss UPPER_SNAKE secret
+    # names (OPENAI_API_KEY, DB_PASSWORD, AWS_SECRET) — the most common shape.
+    for name in ("OPENAI_API_KEY", "DB_PASSWORD", "AWS_SECRET"):
+        out = rules.sast_scan(f'{name} = "sk-proj-abcd1234efgh"')
+        assert any(f.rule == "hardcoded-api-key" for f in out), name
+    # A short value must still be ignored (the {8,} guard).
+    assert rules.sast_scan('API_KEY = "x"') == []

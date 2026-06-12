@@ -13,11 +13,10 @@ stdlib only.
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
-from external_tools import _run, _which
-from scanners.registry import ScanContext, ToolAdapter, finding, register
+from external_tools import _which
+from scanners.registry import ScanContext, ToolAdapter, finding, register, run_json
 
 _INSTALL = ("see https://github.com/ossf/scorecard#installation "
             "(full checks need --repo + GITHUB_TOKEN; --local covers the offline subset)")
@@ -58,14 +57,7 @@ def parse(data) -> list:
 def run(ctx: ScanContext) -> Optional[list]:
     if not _which("scorecard"):
         return None
-    proc = _run(["scorecard", "--local", str(ctx.root), "--format", "json"])
-    if proc is None:
-        return []
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
-    return parse(data)
+    return run_json(ctx, ["scorecard", "--local", str(ctx.root), "--format", "json"], parse)
 
 
 register(ToolAdapter(name="scorecard", scan_type="ci_cd", binary="scorecard",

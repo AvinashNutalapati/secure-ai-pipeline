@@ -9,11 +9,10 @@ stdlib only.
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
-from external_tools import _run, _which
-from scanners.registry import ScanContext, ToolAdapter, finding, has_files, register
+from external_tools import _which
+from scanners.registry import ScanContext, ToolAdapter, finding, register, run_json
 
 _INSTALL = ("brew install gosec   (or: curl -sfL "
             "https://raw.githubusercontent.com/securego/gosec/master/install.sh | sh)")
@@ -41,17 +40,9 @@ def parse(data) -> list:
 def run(ctx: ScanContext) -> Optional[list]:
     if not _which("gosec"):
         return None
-    if not has_files(ctx.root, "*.go"):
-        return []
     # gosec takes Go package globs; run it from the repo root so ./... resolves.
-    proc = _run(["gosec", "-fmt=json", "-quiet", "./..."], cwd=ctx.root)
-    if proc is None:
-        return []
-    try:
-        data = json.loads(proc.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
-    return parse(data)
+    return run_json(ctx, ["gosec", "-fmt=json", "-quiet", "./..."],
+                    parse, gate=("*.go",), cwd=ctx.root)
 
 
 register(ToolAdapter(name="gosec", scan_type="sast", binary="gosec",

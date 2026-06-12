@@ -65,8 +65,15 @@ def main(argv=None) -> int:
 
     if pip_pkgs:
         print(f"::group::pip install {' '.join(pip_pkgs)}")
-        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *pip_pkgs],
-                       check=False)
+        proc = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", *pip_pkgs],
+                              check=False)
+        if proc.returncode != 0:
+            # One unresolvable package fails the whole batch — retry each on its
+            # own so the rest still install.
+            print("  batch install failed; retrying each package individually…")
+            for pkg in pip_pkgs:
+                subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", pkg],
+                               check=False)
         print("::endgroup::")
     for name, cmd in others:
         print(f"::group::install {name}")
