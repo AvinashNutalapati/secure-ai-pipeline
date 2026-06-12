@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0                              # full git history for the secret scan
-      - uses: AvinashNutalapati/secure-ai-pipeline@v2
+      - uses: AvinashNutalapati/secure-ai-pipeline@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # composite actions can't read secrets themselves
         with:
@@ -50,12 +50,14 @@ jobs:
 ```
 
 Push it (or run it from the **Actions** tab) and on every push / PR you get —
-**with nothing installed locally** — Secrets (Gitleaks, full history), SAST
-(Semgrep + AI-specific rules), SCA + malicious packages (Trivy + anti-slopsquatting),
-and the AI workflow blast-radius check. Results land in a **job summary**: one
-table per scan type (severity, finding, location, and a suggested fix — including
-the dependency's fixed version) plus **copy-paste AI fix prompts** per type and one
-combined prompt.
+**with nothing installed locally** — a whole stack of OSS scanners run for you and
+**consolidated per scan type**: Secrets (Gitleaks · TruffleHog · detect-secrets),
+SAST (Semgrep · Bandit · gosec + AI-specific rules), Dependencies (Trivy · OSV ·
+Grype · pip-audit), Dependency Trust (anti-slopsquatting · GuardDog), IaC (Checkov),
+CI/CD workflows (zizmor · actionlint), and the AI workflow blast-radius check.
+Results land in a **job summary**: one table per scan type (severity, finding,
+location, suggested fix — including the dependency's fixed version) plus
+**copy-paste AI fix prompts** per type and one combined prompt.
 
 **Defaults are report-first so the first run isn't a wall of red:** leaked secrets
 and hallucinated/malicious packages **always block**; CVEs and SAST warnings are
@@ -69,8 +71,8 @@ and hallucinated/malicious packages **always block**; CVEs and SAST warnings are
 > Security; without it the upload auto-skips, the run stays green, and findings
 > still appear in the **Actions log** and the **job summary**.
 >
-> **Pin for production:** `@v2` tracks the latest fix; pin to a tag/SHA (e.g.
-> `@v2.0.8`) to lock the version.
+> **Pin for production:** `@v3` tracks the latest fix; pin to a tag/SHA (e.g.
+> `@v3.0.0`) to lock the version.
 
 ## Use it locally — one command
 
