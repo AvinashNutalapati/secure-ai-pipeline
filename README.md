@@ -47,6 +47,7 @@ jobs:
           fail-on-warnings: "false"                   # report-only by default; "true" blocks on CVEs/warnings
           # staging-url: ${{ vars.STAGING_URL }}      # optional: enables the ZAP DAST scan
           # upload-sarif: "auto"                       # auto (public repos) | true (force, needs GHAS) | false
+          # deep-scan: "false"                         # "true" also runs the heaviest scanners (GuardDog) — slower, more thorough
 ```
 
 Push it (or run it from the **Actions** tab) and on every push / PR you get —
@@ -72,7 +73,7 @@ and hallucinated/malicious packages **always block**; CVEs and SAST warnings are
 > still appear in the **Actions log** and the **job summary**.
 >
 > **Pin for production:** `@v3` tracks the latest fix; pin to a tag/SHA (e.g.
-> `@v3.0.0`) to lock the version.
+> `@v3.0.1`) to lock the version.
 
 ## Use it locally — one command
 

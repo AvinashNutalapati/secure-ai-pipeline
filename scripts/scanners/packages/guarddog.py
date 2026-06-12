@@ -88,4 +88,5 @@ def run(ctx: ScanContext) -> Optional[list]:
 
 
 register(ToolAdapter(name="guarddog", scan_type="packages", binary="guarddog",
-                     run=run, install=_INSTALL, ci_install="pip install guarddog"))
+                     run=run, install=_INSTALL, ci_install="pip install guarddog",
+                     heavy=True))  # downloads + scans every dependency — opt-in via deep-scan

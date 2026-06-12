@@ -18,6 +18,14 @@ def test_plan_is_registry_driven(monkeypatch):
         assert cmd and not cmd.startswith("pip install")
 
 
+def test_plan_excludes_heavy_unless_deep(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    pip_default, _ = inst.plan(deep=False)
+    pip_deep, _ = inst.plan(deep=True)
+    assert "guarddog" not in pip_default          # heavy → skipped by default
+    assert "guarddog" in pip_deep                 # …installed only with --deep
+
+
 def test_plan_skips_already_installed(monkeypatch):
     # Pretend everything is on PATH → nothing to install.
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/" + name)

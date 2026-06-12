@@ -28,6 +28,13 @@ inputs:
       the job summary and still gate the build.
     required: false
     default: "auto"
+  deep-scan:
+    description: >-
+      Also run the heaviest scanners (e.g. GuardDog deep package analysis, which
+      downloads and inspects every dependency). Off by default so the standard run
+      stays fast; set 'true' for a thorough nightly/release scan.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -71,7 +78,7 @@ runs:
     # Add a scanner there and it appears here automatically — no edits to this file.
     - name: Stage 1 — Install OSS scanners (best-effort, registry-driven)
       shell: bash
-      run: python "${{ github.action_path }}/scripts/install_scanners.py" || true
+      run: python "${{ github.action_path }}/scripts/install_scanners.py" ${{ inputs.deep-scan == 'true' && '--deep' || '' }} || true
 
     - name: Stage 1 — Unified scan (every installed scanner, consolidated per type)
       shell: bash
@@ -88,15 +95,17 @@ runs:
       # build); fail-on-warnings makes HIGH+ findings block. scan.json feeds the
       # summary, sap.sarif feeds code scanning — both written before any gate.
       run: |
+        DEEP_ARGS=()
+        [ "${{ inputs.deep-scan }}" = "true" ] && DEEP_ARGS=(--deep)
         if [ "${{ inputs.fail-on-warnings }}" = "true" ]; then
           python "${{ github.action_path }}/scripts/scan_all.py" "$GITHUB_WORKSPACE" \
             --only secrets,packages,sca,sast,iac,ci_cd \
-            --offline --no-input --no-color --no-fix-prompts --no-dast \
+            --offline "${DEEP_ARGS[@]}" --no-input --no-color --no-fix-prompts --no-dast \
             --json scan.json --sarif sap.sarif --fail-on high
         else
           python "${{ github.action_path }}/scripts/scan_all.py" "$GITHUB_WORKSPACE" \
             --only secrets,packages,sca,sast,iac,ci_cd \
-            --offline --no-input --no-color --no-fix-prompts --no-dast \
+            --offline "${DEEP_ARGS[@]}" --no-input --no-color --no-fix-prompts --no-dast \
             --json scan.json --sarif sap.sarif || true
         fi
 

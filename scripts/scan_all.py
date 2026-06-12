@@ -303,7 +303,7 @@ def _scan_context(root: Path, offline: bool, dast_url: str = "") -> "registry.Sc
 
 
 def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
-                exclude: list = None) -> dict:
+                exclude: list = None, deep: bool = False) -> dict:
     pol = policy_mod.load_policy(root)
     excludes = list(pol.get("exclude", []) or []) + list(exclude or [])
     ctx = _scan_context(root, offline, dast_url)
@@ -324,7 +324,13 @@ def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
     # streams to stderr and wall-clock collapses toward the slowest single tool.
     _progress(f"Secure AI Pipeline — scanning {root}")
     ext_jobs = [(t, a) for t in selected if t != "ai_posture"
-                for a in registry.available_adapters(t)]
+                for a in registry.available_adapters(t, include_heavy=deep)]
+    if not deep:
+        skipped = sorted({a.name for t in selected
+                          for a in registry.available_adapters(t) if a.heavy})
+        if skipped:
+            _progress(f"  (deep-scan off — skipping heavy tool(s): {', '.join(skipped)}; "
+                      "pass --deep to include)")
     ext_results: dict = {t: [] for t in selected}
     if ext_jobs:
         try:
@@ -656,6 +662,9 @@ def main(argv=None) -> int:
                         default=os.environ.get("GITHUB_WORKSPACE", os.getcwd()))
     parser.add_argument("--offline", action="store_true",
                         help="Skip network checks (anti-slopsquatting package lookups).")
+    parser.add_argument("--deep", action="store_true",
+                        help="Also run the heaviest scanners (e.g. GuardDog deep package "
+                             "analysis). Off by default so the standard scan stays fast.")
     parser.add_argument("--only", default="",
                         help="Comma-separated scan types to run "
                              "(secrets,packages,sca,sast,iac,ci_cd,ai_posture).")
@@ -689,7 +698,7 @@ def main(argv=None) -> int:
     interactive = sys.stdin.isatty() and not args.no_input
 
     result = orchestrate(root, offline=args.offline, only=only,
-                         dast_url=args.dast_url, exclude=cli_excludes)
+                         dast_url=args.dast_url, exclude=cli_excludes, deep=args.deep)
 
     if args.tools:
         print(render_tools(result, no_color=args.no_color))

@@ -38,6 +38,24 @@ def test_adapter_availability_uses_binary_on_path():
     assert b.available() is True
 
 
+def test_guarddog_is_marked_heavy():
+    gd = [a for a in reg.adapters_for("packages") if a.name == "guarddog"][0]
+    assert gd.heavy is True
+
+
+def test_available_adapters_excludes_heavy_unless_requested():
+    fake = reg.ToolAdapter("fake-heavy-xyz", "sast", run=lambda c: [],
+                           available_fn=lambda: True, heavy=True)
+    reg.register(fake)
+    try:
+        with_heavy = [a.name for a in reg.available_adapters("sast", include_heavy=True)]
+        without = [a.name for a in reg.available_adapters("sast", include_heavy=False)]
+        assert "fake-heavy-xyz" in with_heavy
+        assert "fake-heavy-xyz" not in without
+    finally:
+        reg._ADAPTERS.pop("fake-heavy-xyz", None)
+
+
 def test_register_rejects_unknown_scan_type():
     import pytest
     with pytest.raises(ValueError):

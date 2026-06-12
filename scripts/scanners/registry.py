@@ -116,6 +116,7 @@ class ToolAdapter:
     install: str = ""                           # human install hint (shown when missing)
     ci_install: str = ""                        # shell snippet to install it in CI (optional)
     available_fn: Optional[Callable[[], bool]] = None  # override binary check
+    heavy: bool = False                         # slow/expensive — only with deep-scan
 
     def available(self) -> bool:
         if self.available_fn is not None:
@@ -190,8 +191,9 @@ def adapters_for(scan_type: str) -> list[ToolAdapter]:
     return [a for a in all_adapters() if a.scan_type == scan_type]
 
 
-def available_adapters(scan_type: str) -> list[ToolAdapter]:
-    return [a for a in adapters_for(scan_type) if a.available()]
+def available_adapters(scan_type: str, include_heavy: bool = True) -> list[ToolAdapter]:
+    return [a for a in adapters_for(scan_type)
+            if a.available() and (include_heavy or not a.heavy)]
 
 
 def detect() -> dict:

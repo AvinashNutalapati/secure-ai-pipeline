@@ -28,11 +28,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scanners import registry  # noqa: E402
 
 
-def plan():
-    """Return (pip_packages, [(name, shell_cmd)]) for every missing tool."""
+def plan(deep=False):
+    """Return (pip_packages, [(name, shell_cmd)]) for every missing tool.
+    Heavy tools (GuardDog etc.) are installed only with deep=True."""
     pip_pkgs, others = [], []
     for a in registry.all_adapters():
         if not a.ci_install or a.available():
+            continue
+        if a.heavy and not deep:
             continue
         cmd = a.ci_install.strip()
         if cmd.startswith("pip install "):
@@ -47,9 +50,11 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--print", action="store_true", dest="dry",
                    help="Print the install plan without running it.")
+    p.add_argument("--deep", action="store_true",
+                   help="Also install heavy scanners (e.g. GuardDog).")
     args = p.parse_args(argv)
 
-    pip_pkgs, others = plan()
+    pip_pkgs, others = plan(deep=args.deep)
 
     if args.dry:
         if pip_pkgs:
