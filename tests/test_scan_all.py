@@ -93,6 +93,22 @@ def test_orchestrate_packages_layer_is_split_from_sca(tmp_path):
     assert "packages" in result["layers"] and "sca" in result["layers"]
 
 
+def test_ai_posture_merges_external_adapter(tmp_path):
+    # An external ai_posture adapter (e.g. mcp-scan) merges into the built-in
+    # blast-radius layer rather than replacing it.
+    from scanners import registry as reg
+    fake = reg.ToolAdapter(
+        "fake-mcp-xyz", "ai_posture", available_fn=lambda: True,
+        run=lambda ctx: [reg.finding("HIGH", "tool poisoning", tool="fake-mcp-xyz")])
+    reg.register(fake)
+    try:
+        layer = sa.orchestrate(tmp_path, offline=True, only=["ai_posture"])["layers"]["ai_posture"]
+        assert "fake-mcp-xyz" in layer.engine and "built-in" in layer.engine
+        assert any(f.title == "tool poisoning" for f in layer.findings)
+    finally:
+        reg._ADAPTERS.pop("fake-mcp-xyz", None)
+
+
 def test_from_ext_normalizes_severity():
     rows = [{"severity": "error", "title": "x", "file": "a", "line": 3, "tool": "semgrep"}]
     out = sa._from_ext("sast", rows)

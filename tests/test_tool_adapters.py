@@ -8,10 +8,11 @@ the tool is absent. The registry's discovery + availability is tested too.
 from pathlib import Path
 
 from scanners import registry as reg
-from scanners.ci_cd import actionlint, zizmor
+from scanners.ci_cd import actionlint, scorecard, zizmor
 from scanners.iac import checkov, kics
 from scanners.packages import guarddog
-from scanners.sast import bandit, gosec
+from scanners.posture import mcp_scan
+from scanners.sast import bandit, brakeman, gosec
 from scanners.sca import grype, npm_audit, pip_audit
 from scanners.secrets import detect_secrets, trufflehog
 
@@ -23,9 +24,10 @@ def test_registry_discovers_every_scan_type():
     assert "trufflehog" in by_type["secrets"] and "gitleaks" in by_type["secrets"]
     assert "guarddog" in by_type["packages"]
     assert {"trivy", "osv-scanner", "grype", "pip-audit", "npm-audit"} <= set(by_type["sca"])
-    assert {"semgrep", "bandit", "gosec"} <= set(by_type["sast"])
+    assert {"semgrep", "bandit", "gosec", "brakeman"} <= set(by_type["sast"])
     assert {"checkov", "kics"} <= set(by_type["iac"])
-    assert {"zizmor", "actionlint"} <= set(by_type["ci_cd"])
+    assert {"zizmor", "actionlint", "scorecard"} <= set(by_type["ci_cd"])
+    assert "mcp-scan" in by_type["ai_posture"]
     assert "zap" in by_type["dast"]
 
 
@@ -70,11 +72,13 @@ def test_finding_normalises_severity():
 def test_runners_return_none_when_tool_missing(monkeypatch, tmp_path):
     # Every adapter checks _which on its own module import of external_tools.
     for mod in (trufflehog, detect_secrets, grype, pip_audit, npm_audit, bandit,
-                gosec, guarddog, checkov, kics, zizmor, actionlint):
+                gosec, brakeman, guarddog, checkov, kics, zizmor, actionlint,
+                scorecard, mcp_scan):
         monkeypatch.setattr(mod, "_which", lambda name: None)
     ctx = reg.ScanContext(root=tmp_path)
     for mod in (trufflehog, detect_secrets, grype, pip_audit, npm_audit, bandit,
-                gosec, guarddog, checkov, kics, zizmor, actionlint):
+                gosec, brakeman, guarddog, checkov, kics, zizmor, actionlint,
+                scorecard, mcp_scan):
         assert mod.run(ctx) is None, f"{mod.__name__} should degrade to None"
 
 
@@ -175,6 +179,17 @@ def test_gosec_handles_string_and_range_lines():
     assert all(f["tool"] == "gosec" for f in out)
 
 
+def test_brakeman_parses_warnings():
+    data = {"warnings": [
+        {"warning_type": "SQL Injection", "message": "Possible SQL injection",
+         "file": "app/models/user.rb", "line": 42, "confidence": "High",
+         "check_name": "SQL", "link": "https://brakemanscanner.org/sql"}]}
+    out = brakeman.parse(data)
+    assert out[0]["severity"] == "HIGH" and out[0]["file"] == "app/models/user.rb"
+    assert out[0]["line"] == 42 and out[0]["tool"] == "brakeman"
+    assert "SQL Injection" in out[0]["title"]
+
+
 # ── packages ─────────────────────────────────────────────────────────────────
 
 def test_guarddog_rule_severity_and_skips_clean():
@@ -250,3 +265,32 @@ def test_actionlint_bumps_injection_to_high():
     assert out[0]["severity"] == "HIGH"     # injection → HIGH
     assert out[1]["severity"] == "MEDIUM"   # plain syntax → MEDIUM
     assert out[0]["line"] == 15 and out[0]["tool"] == "actionlint"
+
+
+def test_scorecard_low_scores_become_findings():
+    data = {"score": 4.5, "checks": [
+        {"name": "Branch-Protection", "score": 1, "reason": "no protection",
+         "documentation": {"short": "Is branch protection on?", "url": "https://x"}},
+        {"name": "Pinned-Dependencies", "score": 6, "reason": "some unpinned",
+         "documentation": {"short": "...", "url": "https://y"}},
+        {"name": "Binary-Artifacts", "score": 10, "reason": "none", "documentation": {}},
+        {"name": "CI-Tests", "score": -1, "reason": "n/a", "documentation": {}}]}
+    out = scorecard.parse(data)
+    names = {f["title"].split(":")[0] for f in out}
+    assert "Branch-Protection" in names      # 1 → HIGH
+    assert "Pinned-Dependencies" in names     # 6 → LOW
+    assert "Binary-Artifacts" not in names    # 10 → fine, no finding
+    assert "CI-Tests" not in names            # -1 → didn't run
+    bp = [f for f in out if f["title"].startswith("Branch-Protection")][0]
+    assert bp["severity"] == "HIGH" and bp["tool"] == "scorecard"
+
+
+def test_mcp_scan_parses_flagged_tools():
+    data = {"servers": [{"name": "evil-mcp", "tools": [
+        {"name": "read_file", "status": "flagged",
+         "message": "tool description contains prompt injection", "severity": "HIGH"},
+        {"name": "ok_tool", "status": "ok", "message": "passed"}]}]}
+    out = mcp_scan.parse(data)
+    assert len(out) == 1                      # only the flagged tool
+    assert out[0]["severity"] == "HIGH" and out[0]["tool"] == "mcp-scan"
+    assert "read_file" in out[0]["title"] and "injection" in out[0]["detail"].lower()

@@ -323,7 +323,7 @@ def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
     # another with no output is what made the CI step look frozen; progress now
     # streams to stderr and wall-clock collapses toward the slowest single tool.
     _progress(f"Secure AI Pipeline — scanning {root}")
-    ext_jobs = [(t, a) for t in selected if t != "ai_posture"
+    ext_jobs = [(t, a) for t in selected
                 for a in registry.available_adapters(t, include_heavy=deep)]
     if not deep:
         skipped = sorted({a.name for t in selected
@@ -353,8 +353,14 @@ def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
     layers: dict = {}
     for t in selected:
         if t == "ai_posture":
-            _progress("  ▶ ai_posture — AI workflow blast radius")
-            layers[t] = run_ai_posture(root, pol)
+            # Built-in blast radius (policy-applied) + any external ai_posture
+            # adapters (e.g. mcp-scan) that ran in the parallel phase.
+            _progress("  ▶ ai_posture — AI workflow blast radius (built-in)")
+            layer = run_ai_posture(root, pol)
+            for name, rows in ext_results.get("ai_posture", []):
+                layer.findings += _from_ext("ai_posture", rows)
+                layer.engine = f"{layer.engine} + {name}" if layer.engine else name
+            layers[t] = layer
         else:
             layers[t] = _assemble_layer(t, ext_results.get(t, []), ctx)
     if dast_url:
