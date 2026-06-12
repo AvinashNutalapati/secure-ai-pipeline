@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="secure-ai-pipeline",
-    version="3.1.0",
+    version="3.2.0",
     description="Security for AI-assisted development — AI Agent Blast Radius checkup + code pipeline",
     author="AvinashNutalapati",
     license="MIT",

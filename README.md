@@ -51,11 +51,12 @@ jobs:
 ```
 
 Push it (or run it from the **Actions** tab) and on every push / PR you get —
-**with nothing installed locally** — a whole stack of OSS scanners run for you and
-**consolidated per scan type**: Secrets (Gitleaks · TruffleHog · detect-secrets),
-SAST (Semgrep · Bandit · gosec + AI-specific rules), Dependencies (Trivy · OSV ·
-Grype · pip-audit · npm-audit), Dependency Trust (anti-slopsquatting · GuardDog), IaC (Checkov),
-CI/CD workflows (zizmor · actionlint), and the AI workflow blast-radius check.
+**with nothing installed locally** — a whole stack of OSS scanners run in parallel
+and **consolidated per scan type**: Secrets (Gitleaks · TruffleHog · detect-secrets),
+SAST (Semgrep · Bandit · gosec · Brakeman + AI-specific rules), Dependencies (Trivy ·
+OSV · Grype · pip-audit · npm-audit), Dependency Trust (anti-slopsquatting · GuardDog),
+IaC (Checkov · KICS), CI/CD workflows (zizmor · actionlint · Scorecard), and the AI
+workflow blast-radius check (+ MCP-Scan). Extra scanners activate automatically when present.
 Results land in a **job summary**: one table per scan type (severity, finding,
 location, suggested fix — including the dependency's fixed version) plus
 **copy-paste AI fix prompts** per type and one combined prompt.
@@ -73,7 +74,7 @@ and hallucinated/malicious packages **always block**; CVEs and SAST warnings are
 > still appear in the **Actions log** and the **job summary**.
 >
 > **Pin for production:** `@v3` tracks the latest fix; pin to a tag/SHA (e.g.
-> `@v3.1.0`) to lock the version.
+> `@v3.2.0`) to lock the version.
 
 ## Use it locally — one command
 
@@ -183,9 +184,10 @@ cd secure-ai-pipeline && pip install -r extensions/claude_mcp/requirements.txt
 claude mcp add secure-ai-pipeline -- python -m extensions.claude_mcp.mcp_server
 ```
 
-Claude can now call `check_package`, `sast_scan`, `sca_scan`, and `full_scan`
-mid-session — ask it to "verify that package exists before importing it."
-([details](extensions/claude_mcp/README.md))
+Claude can now call `check_package`, `sast_scan`, `sca_scan`, `full_scan`, and
+`scan_repo` (the full multi-tool scan on your project, consolidated per type)
+mid-session — ask it to "verify that package exists before importing it" or
+"scan this repo." ([details](extensions/claude_mcp/README.md))
 
 ### OpenAI Custom GPT
 
