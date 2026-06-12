@@ -1,15 +1,19 @@
 """Cross-channel rule parity.
 
 The canonical scanner rules live once, per scan type, under scripts/scanners/.
-Until the generator (scripts/gen_rules.py) auto-emits the cross-language mirrors,
-these tests FAIL if a canonical rule isn't reflected in the MCP server, the
-Semgrep ruleset, or the VS Code extension — so "edit in one place" is enforced,
+scripts/gen_rules.py emits the cross-language mirrors (the Semgrep ruleset + the
+VS Code rule table) from that source; the Python channels import it directly.
+
+These tests FAIL if a canonical rule isn't reflected in the MCP server, the
+Semgrep ruleset, or the VS Code extension, AND if the generated mirrors are
+stale relative to the source — so "edit in one place, regenerate" is enforced,
 not just hoped.
 """
 
 import re
 from pathlib import Path
 
+import gen_rules
 from scanners.sast.ai_insecure_defaults import SAST_REGEX_RULES
 from scanners.sca.known_cves import KNOWN_CVES
 
@@ -29,9 +33,19 @@ def test_canonical_sast_rules_present_in_semgrep():
 
 
 def test_canonical_sast_rules_present_in_vscode():
-    ts_ids = _ids_in("extensions/vscode/src/diagnostics.ts", r'id:\s*"([^"]+)"')
+    # The VS Code rules table is generated from the canonical catalog; ids live
+    # in rules.generated.ts (diagnostics.ts only holds the fix functions).
+    ts_ids = _ids_in("extensions/vscode/src/rules.generated.ts", r'id:\s*"([^"]+)"')
     missing = CANONICAL_SAST - ts_ids
     assert not missing, f"SAST rules missing from the VS Code extension: {missing}"
+
+
+def test_generated_mirrors_not_stale():
+    # gen_rules --check exits non-zero if the on-disk Semgrep YAML / VS Code
+    # table differ from what the canonical catalog would emit right now.
+    assert gen_rules.main(["--check"]) == 0, (
+        "Generated mirrors are stale — run `python scripts/gen_rules.py` and commit"
+    )
 
 
 def test_canonical_sast_rules_present_in_mcp():

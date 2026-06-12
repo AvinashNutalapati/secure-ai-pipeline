@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { GENERATED_RULES } from "./rules.generated";
 
 export type Lang = "python" | "javascript";
 export type RuleSeverity = "error" | "warning";
@@ -23,94 +24,53 @@ export interface SecurityRule {
   ) => { title: string; replacement: string; ensureImport?: string };
 }
 
+type FixFn = (
+  targetText: string,
+  lang: Lang
+) => { title: string; replacement: string; ensureImport?: string };
+
+// Quick-fix functions are CODE, so they stay here keyed by rule id; everything
+// else (ids, severity, message, regexes, languages) comes from the generated
+// table, which scripts/gen_rules.py emits from the one canonical catalog
+// (scripts/scanners/sast/ai_insecure_defaults.py). Edit a rule there + regen.
+const FIXES: Record<string, FixFn> = {
+  "tls-verify-false": () => ({
+    title: "Enable TLS verification (verify=True)",
+    replacement: "verify=True",
+  }),
+  "flask-debug-true": () => ({
+    title: "Gate debug on an env var",
+    replacement: 'debug=os.getenv("FLASK_DEBUG", "false") == "true"',
+    ensureImport: "import os",
+  }),
+  "wildcard-cors": () => ({
+    title: "Restrict CORS to an explicit origin",
+    replacement: '"https://yourapp.example.com"',
+  }),
+  "subprocess-shell-true": () => ({
+    title: "Disable shell (shell=False)",
+    replacement: "shell=False",
+  }),
+  "hardcoded-api-key": (_targetText: string, lang: Lang) => ({
+    title: "Load from environment variable",
+    replacement: lang === "python" ? 'os.environ["API_KEY"]' : "process.env.API_KEY",
+    ensureImport: lang === "python" ? "import os" : undefined,
+  }),
+};
+
 /**
- * The in-editor rule set. Mirrors the Semgrep `.semgrep/ai-insecure-defaults.yml`
- * rules and the regex engine in `scripts/run_pipeline.py`. Everything runs locally
- * in the extension process — no network, no Python, no Semgrep binary.
+ * The in-editor rule set, assembled from the generated table + the local fix
+ * functions. Everything runs locally in the extension — no network, no Python.
  */
-export const RULES: SecurityRule[] = [
-  {
-    id: "tls-verify-false",
-    severity: "error",
-    message:
-      "TLS certificate verification disabled (verify=False) — allows man-in-the-middle attacks.",
-    trigger: /requests\.\w+\s*\([^)]*\bverify\s*=\s*False\b/,
-    target: /\bverify\s*=\s*False\b/,
-    languages: ["python"],
-    fix: () => ({ title: "Enable TLS verification (verify=True)", replacement: "verify=True" }),
-  },
-  {
-    id: "flask-debug-true",
-    severity: "error",
-    message:
-      "Flask debug=True exposes an interactive debugger that allows arbitrary code execution.",
-    trigger: /app\.run\s*\([^)]*\bdebug\s*=\s*True\b/,
-    target: /\bdebug\s*=\s*True\b/,
-    languages: ["python"],
-    fix: () => ({
-      title: 'Gate debug on an env var',
-      replacement: 'debug=os.getenv("FLASK_DEBUG", "false") == "true"',
-      ensureImport: "import os",
-    }),
-  },
-  {
-    id: "wildcard-cors",
-    severity: "warning",
-    message:
-      "Wildcard CORS (origins=\"*\") lets any website make credentialed requests. Restrict to trusted origins.",
-    trigger: /origins\s*=\s*["']\*["']|Access-Control-Allow-Origin["']?\s*[:=]\s*["']\*["']/, // nosemgrep: rule definition, not a CORS misconfig
-    target: /["']\*["']/,
-    languages: ["python", "javascript"],
-    fix: () => ({
-      title: "Restrict CORS to an explicit origin",
-      replacement: '"https://yourapp.example.com"',
-    }),
-  },
-  {
-    id: "subprocess-shell-true",
-    severity: "error",
-    message:
-      "subprocess with shell=True and user input enables command injection. Pass an argument list instead.",
-    trigger: /subprocess\.\w+\s*\([^)]*\bshell\s*=\s*True\b/,
-    target: /\bshell\s*=\s*True\b/,
-    languages: ["python"],
-    fix: () => ({ title: "Disable shell (shell=False)", replacement: "shell=False" }),
-  },
-  {
-    id: "sql-injection-fstring",
-    severity: "error",
-    message:
-      "SQL query built from an f-string or concatenation — use parameterised queries (execute(sql, (param,))).",
-    trigger:
-      /\.execute\s*\(\s*f["']|\.execute\s*\(\s*["'][^"']*["']\s*%\s*\w|\.execute\s*\(\s*["'][^"']*["']\s*\+\s*\w/,
-    languages: ["python"],
-  },
-  {
-    id: "hardcoded-api-key",
-    severity: "error",
-    message:
-      "Hardcoded credential in source. Load it from the environment (os.environ[...]) or a secrets manager.",
-    trigger:
-      /\b(api_key|secret|password|passwd|token|auth_key|access_key)\s*=\s*["'][^"']{8,}["']/i,
-    target: /["'][^"']{8,}["']/,
-    languages: ["python", "javascript"],
-    fix: (_targetText: string, lang: Lang) => ({
-      title: "Load from environment variable",
-      // The matched text is the string literal value; we cannot see the var name
-      // here, so emit a generic env lookup the developer renames — language-aware.
-      replacement: lang === "python" ? 'os.environ["API_KEY"]' : "process.env.API_KEY",
-      ensureImport: lang === "python" ? "import os" : undefined,
-    }),
-  },
-  {
-    id: "eval-user-input",
-    severity: "error",
-    message:
-      "eval/exec on request data allows arbitrary code execution. Remove it or use a safe parser.",
-    trigger: /\b(?:eval|exec)\s*\(\s*request\./,
-    languages: ["python"],
-  },
-];
+export const RULES: SecurityRule[] = GENERATED_RULES.map((r) => ({
+  id: r.id,
+  severity: r.severity,
+  message: r.message,
+  trigger: new RegExp(r.trigger, r.flags),
+  target: r.target ? new RegExp(r.target, r.flags) : undefined,
+  languages: r.languages,
+  fix: FIXES[r.id],
+}));
 
 // A value is a placeholder only when the WHOLE value matches (mirrors
 // run_pipeline.py): a real key merely containing "example" must still flag.
