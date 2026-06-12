@@ -1,4 +1,7 @@
 """
+secure-ai-pipeline:rule-source — excluded from the built-in scan (the pattern
+strings below look like insecure code but are rule definitions).
+
 Canonical SAST rule catalog — the single source for the AI-insecure-default
 checks across every channel.
 

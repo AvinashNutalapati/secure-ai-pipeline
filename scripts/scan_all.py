@@ -35,18 +35,25 @@ import check_packages  # noqa: E402
 import run_pipeline as rp  # noqa: E402
 import blast_radius as br  # noqa: E402
 import policy as policy_mod  # noqa: E402
+from scanners import registry  # noqa: E402
 from scanners.secrets import config_secrets as secrets_in_config, prompt_privacy  # noqa: E402
 
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 _RANK = {s: i for i, s in enumerate(SEVERITIES)}
 
-TABLE_ORDER = ["secrets", "sca", "sast", "dast", "ai_posture"]
+# Order + the compact-view labels. The canonical ordering and the AI fix-prompt
+# wording live once in scanners/registry.py (SCAN_TYPES); these labels are the
+# upper-cased display strings for the terminal table.
+TABLE_ORDER = list(registry.SCAN_TYPE_KEYS)
 LABELS = {
     "secrets": "SECRETS",
-    "sca": "DEPENDENCIES  (SCA + malicious packages)",
+    "packages": "DEPENDENCY TRUST  (supply chain)",
+    "sca": "DEPENDENCIES  (SCA / CVEs)",
     "sast": "STATIC ANALYSIS  (SAST)",
-    "dast": "DYNAMIC ANALYSIS  (DAST)",
+    "iac": "INFRASTRUCTURE AS CODE  (IaC)",
+    "ci_cd": "CI / CD  (GitHub Actions)",
     "ai_posture": "AI WORKFLOW BLAST RADIUS",
+    "dast": "DYNAMIC ANALYSIS  (DAST)",
 }
 SOURCE_EXTS = (".py", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")
 MAX_FILE_BYTES = 1_500_000  # skip giant/minified files in the built-in scanners
@@ -79,6 +86,20 @@ class Layer:
 # Built-in fallbacks (no external tool required)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Our own rule-definition files embed example/pattern strings that look like
+# insecure code (e.g. the Semgrep pattern "app.run(..., debug=True, ...)"). The
+# regex fallback must not flag its own catalog — these files carry this marker.
+_SCANNER_SOURCE_MARKER = "secure-ai-pipeline:rule-source"
+
+
+def _is_scanner_source(p: Path) -> bool:
+    try:
+        with open(p, "r", encoding="utf-8", errors="ignore") as fh:
+            return _SCANNER_SOURCE_MARKER in fh.read(2048)
+    except OSError:
+        return False
+
+
 def _walk_sources(root: Path):
     for p in root.rglob("*"):
         if check_packages._skip(p) or not p.is_file():
@@ -89,6 +110,8 @@ def _walk_sources(root: Path):
             if p.stat().st_size > MAX_FILE_BYTES:
                 continue
         except OSError:
+            continue
+        if _is_scanner_source(p):
             continue
         yield p
 
@@ -148,22 +171,33 @@ def builtin_sast(root: Path) -> list:
     return out
 
 
-def builtin_sca(root: Path, offline: bool) -> list:
+def builtin_packages(root: Path, offline: bool) -> list:
+    """Supply-chain integrity: hallucinated / non-existent / registry-unreachable
+    imports (anti-slopsquatting). The unique check no external tool does."""
     out: list = []
-    # Slopsquatting / hallucinated + registry-unreachable (reuses blast_radius).
     if not offline:
         for f in br.package_findings(root):
-            out.append(ScanFinding("sca", f.severity, f.title, f.detail,
+            out.append(ScanFinding("packages", f.severity, f.title, f.detail,
                                    f.file, f.line, f.fix, "built-in (anti-slopsquatting)"))
-    # Curated CVEs for pinned requirements.txt deps.
+    return out
+
+
+def builtin_sca(root: Path, offline: bool) -> list:
+    # Curated CVEs for pinned requirements.txt deps (offline-safe). Real CVE
+    # breadth comes from trivy/osv/grype/pip-audit when installed.
+    out: list = []
+    import re
     for req in root.rglob("requirements*.txt"):
         if check_packages._skip(req):
             continue
         for f in rp.stage1_sca(req):
             if f.rule_id in ("requirements-not-found",):
                 continue
+            m = re.search(r"\(fix:\s*([^)]+)\)", f.message)
+            fixtext = f"Upgrade to {m.group(1).strip()}." if m else \
+                "Upgrade to a patched release (see the advisory)."
             out.append(ScanFinding("sca", ext._norm_sev(f.severity), f.message.split(" (fix")[0],
-                                   f.message, _rel(req, root), f.line, f.message,
+                                   f.message, _rel(req, root), f.line, fixtext,
                                    "built-in (curated CVEs)"))
     return out
 
@@ -178,42 +212,52 @@ def _from_ext(scan_type: str, rows: list) -> list:
                         r.get("fix", ""), r.get("tool", "")) for r in rows]
 
 
-def run_secrets(root: Path, tools: dict) -> Layer:
-    rows = ext.run_gitleaks(root)
-    if rows is not None:
-        return Layer("secrets", "gitleaks", _from_ext("secrets", rows))
-    return Layer("secrets", "built-in", builtin_secrets(root),
-                 note=f"install gitleaks for full git-history coverage — {ext.INSTALL_HINTS['gitleaks']}")
+# Per-scan-type built-in fallback policy. Each entry: (fn(root, offline) ->
+# list[ScanFinding], always). always=True runs the built-in even when an external
+# tool ran — slopsquatting + curated CVEs cover ground no OSS tool does; always=
+# False uses the built-in only when no external scanner for that type is installed.
+BUILTIN_FALLBACK = {
+    "secrets":  (lambda root, offline: builtin_secrets(root), False),
+    "packages": (builtin_packages, True),
+    "sca":      (builtin_sca, True),
+    "sast":     (lambda root, offline: builtin_sast(root), False),
+}
 
 
-def run_sca(root: Path, tools: dict, offline: bool) -> Layer:
+def run_layer(scan_type: str, ctx: "registry.ScanContext") -> Layer:
+    """Run EVERY installed tool registered for this scan type, add the built-in
+    per the fallback policy, and consolidate into one Layer. This single path is
+    what makes 'drop an adapter file under scanners/ → it runs in every channel'
+    true: scan_all, the Action, and the MCP server all reach a tool through here."""
     findings: list = []
     engines: list = []
-    trivy = ext.run_trivy(root)
-    if trivy is not None:
-        findings += _from_ext("sca", trivy)
-        engines.append("trivy")
-    osv = ext.run_osv(root)
-    if osv is not None:
-        findings += _from_ext("sca", osv)
-        engines.append("osv-scanner")
-    # Slopsquatting always adds value and needs no external tool.
-    findings += builtin_sca(root, offline)
+    for adapter in registry.available_adapters(scan_type):
+        try:
+            rows = adapter.run(ctx)
+        except Exception:
+            rows = None                        # a broken tool never sinks the scan
+        if rows is None:
+            continue
+        findings += _from_ext(scan_type, rows)
+        engines.append(adapter.name)
+
+    fb = BUILTIN_FALLBACK.get(scan_type)
+    if fb:
+        fn, always = fb
+        if always or not engines:
+            findings += fn(ctx.root, ctx.offline)
+            engines.append("built-in")
+
+    # When no real OSS tool ran (built-in-only, or nothing), point at what to install.
     note = ""
-    if not trivy and not osv:
-        note = ("install trivy + osv-scanner for CVE and malicious-package detection — "
-                f"{ext.INSTALL_HINTS['trivy']}; {ext.INSTALL_HINTS['osv-scanner']}")
-    engine = " + ".join(engines + ["built-in"]) if engines else "built-in"
-    return Layer("sca", engine, findings, note=note)
-
-
-def run_sast(root: Path, tools: dict) -> Layer:
-    ruleset = Path(__file__).resolve().parent.parent / ".semgrep" / "ai-insecure-defaults.yml"
-    rows = ext.run_semgrep(root, extra_config=ruleset)
-    if rows is not None:
-        return Layer("sast", "semgrep", _from_ext("sast", rows))
-    return Layer("sast", "built-in", builtin_sast(root),
-                 note=f"install semgrep for full SAST coverage (JS/TS + community rules) — {ext.INSTALL_HINTS['semgrep']}")
+    if not any(e != "built-in" for e in engines):
+        missing = [a for a in registry.adapters_for(scan_type) if not a.available()]
+        if missing:
+            note = ("install " + ", ".join(a.name for a in missing[:3])
+                    + f" for deeper {LABELS.get(scan_type, scan_type)} coverage — "
+                    + missing[0].install)
+    engine = " + ".join(dict.fromkeys(engines)) if engines else "not run"
+    return Layer(scan_type, engine, findings, note=note)
 
 
 def run_ai_posture(root: Path, pol: dict) -> Layer:
@@ -226,39 +270,54 @@ def run_ai_posture(root: Path, pol: dict) -> Layer:
     return Layer("ai_posture", "built-in", rows)
 
 
-def run_dast(url: str, tools: dict) -> Layer:
-    rules = Path(__file__).resolve().parent.parent / ".zap" / "rules.tsv"
-    rows = ext.run_zap(url, rules_file=rules)
-    if rows is None:
-        return Layer("dast", "unavailable", [],
-                     note=f"install ZAP or Docker to run DAST — {ext.INSTALL_HINTS['docker']}")
-    return Layer("dast", "zap", _from_ext("dast", rows), note=f"target: {url}")
+def run_dast(url: str, ctx: "registry.ScanContext") -> Layer:
+    ctx.dast_url = url
+    for adapter in registry.adapters_for("dast"):
+        rows = adapter.run(ctx)
+        if rows is not None:
+            return Layer("dast", adapter.name, _from_ext("dast", rows), note=f"target: {url}")
+    return Layer("dast", "unavailable", [],
+                 note=f"install ZAP or Docker to run DAST — {ext.INSTALL_HINTS['docker']}")
+
+
+def _scan_context(root: Path, offline: bool, dast_url: str = "") -> "registry.ScanContext":
+    base = Path(__file__).resolve().parent.parent
+    return registry.ScanContext(
+        root=root, offline=offline, dast_url=dast_url,
+        semgrep_ruleset=base / ".semgrep" / "ai-insecure-defaults.yml",
+        zap_rules=base / ".zap" / "rules.tsv")
 
 
 def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
                 exclude: list = None) -> dict:
-    tools = ext.detect()
     pol = policy_mod.load_policy(root)
     excludes = list(pol.get("exclude", []) or []) + list(exclude or [])
+    ctx = _scan_context(root, offline, dast_url)
+
+    # Default set: every non-DAST type that has a built-in OR an installed tool.
+    # iac/ci_cd therefore appear automatically once checkov/zizmor are on PATH
+    # (e.g. the Action installs them) and stay hidden on a bare local repo.
+    # An explicit --only always runs exactly what was asked (even "not run" types).
+    if only:
+        selected = [t for t in TABLE_ORDER if t in only]
+    else:
+        selected = [t for t in TABLE_ORDER if t != "dast" and (
+            t in BUILTIN_FALLBACK or t == "ai_posture" or registry.available_adapters(t))]
+
     layers: dict = {}
-    selected = only or [t for t in TABLE_ORDER if t != "dast"]
-    if "secrets" in selected:
-        layers["secrets"] = run_secrets(root, tools)
-    if "sca" in selected:
-        layers["sca"] = run_sca(root, tools, offline)
-    if "sast" in selected:
-        layers["sast"] = run_sast(root, tools)
-    if "ai_posture" in selected:
-        layers["ai_posture"] = run_ai_posture(root, pol)
+    for t in selected:
+        layers[t] = run_ai_posture(root, pol) if t == "ai_posture" else run_layer(t, ctx)
     if dast_url:
-        layers["dast"] = run_dast(dast_url, tools)
+        layers["dast"] = run_dast(dast_url, ctx)
+
     # Honor exclude globs (policy file + --exclude) across every layer, so
     # fixture/vendor/test dirs can be silenced uniformly.
     if excludes:
         for lyr in layers.values():
             lyr.findings = [f for f in lyr.findings
                             if not policy_mod._excluded(f.file, excludes)]
-    return {"root": str(root), "tools": tools, "layers": layers, "excludes": excludes}
+    return {"root": str(root), "tools": registry.detect(), "layers": layers,
+            "excludes": excludes, "ctx": ctx}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -376,14 +435,15 @@ def render_detail(result: dict, scan_type: str, no_color: bool = False) -> str:
 
 def render_tools(result: dict, no_color: bool = False) -> str:
     on = _color_on(no_color)
-    out = [_c("B", "  Scanner engines", on)]
-    for name, role in ext.TOOL_ROLES.items():
-        path = result["tools"].get(name)
-        if path:
-            out.append(f"    {_c('OK', '✓', on)} {name:<14} {_c('DIM', role, on)}")
-        else:
-            hint = ext.INSTALL_HINTS.get(name, "")
-            out.append(f"    {_c('DIM', '·', on)} {name:<14} {_c('DIM', 'not installed — ' + hint, on)}")
+    out = [_c("B", "  Scanner engines  (OSS — installed ones run, the rest are optional)", on)]
+    installed = result["tools"]
+    for t in TABLE_ORDER:
+        for a in registry.adapters_for(t):
+            if installed.get(a.name):
+                out.append(f"    {_c('OK', '✓', on)} {a.name:<15} {_c('DIM', t, on)}")
+            else:
+                out.append(f"    {_c('DIM', '·', on)} {a.name:<15} "
+                           f"{_c('DIM', f'{t} — {a.install}', on)}")
     sh = ext.socket_hint()
     if sh:
         out.append(_c("DIM", f"    ⓘ {sh}", on))
@@ -394,25 +454,13 @@ def render_tools(result: dict, no_color: bool = False) -> str:
 # Fix prompts
 # ─────────────────────────────────────────────────────────────────────────────
 
-FIX_PROMPT_INTRO = {
-    "secrets": "remove every hardcoded secret and replace it with an environment "
-               "variable or secrets-manager lookup, then note that the exposed value must be rotated",
-    "sca": "upgrade or remove each flagged dependency: patch known-vulnerable versions to "
-           "the fixed release, and REMOVE any package flagged malicious or non-existent (slopsquatting)",
-    "sast": "fix each insecure code pattern using the secure idiom (parameterised queries, "
-            "verify=True, no shell=True, no eval on input, env-gated debug, no hardcoded creds)",
-    "dast": "fix each runtime/HTTP issue at the server: add the missing security headers, "
-            "secure cookies, and input handling identified by the DAST scan",
-    "ai_posture": "harden the AI workflow: pin actions to commit SHAs, remove pull_request_target "
-                  "where possible, scope agent permissions, and stop passing secrets to MCP servers",
-}
-
-
 def fix_prompt(scan_type: str, findings: list, root: str) -> str:
+    # The per-type "Task:" wording lives once in scanners/registry.py so scan_all
+    # and the Action job summary phrase the AI fix prompt identically.
     lines = [f"# Fix prompt — {LABELS.get(scan_type, scan_type)}",
              "",
              f"You are a senior application-security engineer. In the repo at `{root}`, "
-             f"{FIX_PROMPT_INTRO.get(scan_type, 'fix the security findings below')}.",
+             f"{registry.intro_for(scan_type)}.",
              "",
              "Rules:",
              "- Fix only what each finding describes; do not touch unrelated code.",
@@ -504,6 +552,53 @@ th{{background:#fafafa;color:#5f6368;font-size:11px;text-transform:uppercase}}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Combined SARIF (one document for every tool → the GitHub Security tab)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SARIF_LEVEL = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning",
+                "LOW": "note", "INFO": "note"}
+_SARIF_SCORE = {"CRITICAL": "9.5", "HIGH": "8.0", "MEDIUM": "5.0", "LOW": "2.0", "INFO": "0.0"}
+
+
+def render_sarif(result: dict) -> dict:
+    """One SARIF 2.1.0 document covering every layer/tool, so a single upload
+    populates GitHub code scanning with the whole consolidated result."""
+    rules: dict = {}
+    results: list = []
+    for stype, lyr in result["layers"].items():
+        for f in lyr.findings:
+            if f.severity == "INFO":
+                continue
+            rid = f"sap/{stype}/{f.tool or 'built-in'}"
+            if rid not in rules:
+                rules[rid] = {
+                    "id": rid, "name": rid.replace("/", "-"),
+                    "shortDescription": {"text": f"{LABELS.get(stype, stype)} · {f.tool or 'built-in'}"},
+                    "properties": {"security-severity": _SARIF_SCORE.get(f.severity, "5.0"),
+                                   "tags": ["security", stype]}}
+            results.append({
+                "ruleId": rid,
+                "level": _SARIF_LEVEL.get(f.severity, "warning"),
+                "message": {"text": f.title + (f"\n\nFix: {f.fix}" if f.fix else "")},
+                "locations": [{"physicalLocation": {
+                    "artifactLocation": {"uri": (f.file or ".").lstrip("/")},
+                    "region": {"startLine": max(1, int(f.line or 1))}}}],
+                "properties": {"tool": f.tool, "severity": f.severity},
+            })
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "Secure AI Pipeline",
+                "informationUri": "https://github.com/AvinashNutalapati/secure-ai-pipeline",
+                "rules": list(rules.values())}},
+            "results": results,
+        }],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CLI
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -518,7 +613,8 @@ def main(argv=None) -> int:
     parser.add_argument("--offline", action="store_true",
                         help="Skip network checks (anti-slopsquatting package lookups).")
     parser.add_argument("--only", default="",
-                        help="Comma-separated scan types to run (secrets,sca,sast,ai_posture).")
+                        help="Comma-separated scan types to run "
+                             "(secrets,packages,sca,sast,iac,ci_cd,ai_posture).")
     parser.add_argument("--exclude", default="",
                         help="Comma-separated path globs to drop from every layer "
                              "(e.g. 'test/**,data/**'). Merged with the policy file's exclude.")
@@ -528,6 +624,8 @@ def main(argv=None) -> int:
     parser.add_argument("--no-dast", action="store_true", help="Never prompt for a DAST URL.")
     parser.add_argument("--json", metavar="OUT", help="Write the full result as JSON.")
     parser.add_argument("--html", metavar="OUT", help="Write the clickable HTML report.")
+    parser.add_argument("--sarif", metavar="OUT",
+                        help="Write a combined SARIF 2.1.0 file (for GitHub code scanning).")
     parser.add_argument("--fix-prompts-dir", default=".secure-ai-pipeline",
                         help="Where to write per-type AI fix prompts (default: .secure-ai-pipeline).")
     parser.add_argument("--no-fix-prompts", action="store_true",
@@ -590,6 +688,9 @@ def main(argv=None) -> int:
     if args.html:
         Path(args.html).write_text(render_html(result), encoding="utf-8")
         print(f"  HTML report written to {args.html}")
+    if args.sarif:
+        Path(args.sarif).write_text(json.dumps(render_sarif(result), indent=2), encoding="utf-8")
+        print(f"  SARIF written to {args.sarif}")
 
     if args.fail_on:
         threshold = _RANK[args.fail_on.upper()]
@@ -636,7 +737,7 @@ def _interactive_dast(result: dict, no_color: bool) -> None:
         return
     if not url:
         return
-    layer = run_dast(url, result["tools"])
+    layer = run_dast(url, result["ctx"])
     result["layers"]["dast"] = layer
     print(render_detail(result, "dast", no_color=no_color) if layer.findings
           else _c("DIM", f"    {layer.note or 'no DAST findings'}", on))

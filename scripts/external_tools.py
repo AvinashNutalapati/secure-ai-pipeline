@@ -79,13 +79,15 @@ def _norm_sev(value: str, default: str = "MEDIUM") -> str:
     }.get(v, default)
 
 
-def _run(cmd: list, timeout: int = 600) -> Optional[subprocess.CompletedProcess]:
+def _run(cmd: list, timeout: int = 600, cwd=None) -> Optional[subprocess.CompletedProcess]:
     """Run a tool, returning the completed process or None on any failure.
     Tools legitimately exit non-zero when they find issues, so the caller
-    inspects output rather than the return code."""
+    inspects output rather than the return code. ``cwd`` runs the tool from a
+    directory (needed by tools that take package globs like gosec's ./...)."""
     try:
         return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd, capture_output=True, text=True, timeout=timeout, check=False,
+            cwd=str(cwd) if cwd else None,
         )
     except (OSError, subprocess.SubprocessError):
         return None

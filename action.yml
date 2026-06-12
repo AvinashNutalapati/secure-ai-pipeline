@@ -1,5 +1,5 @@
 name: Secure AI Pipeline
-description: AI-assisted development security — AI Agent Blast Radius (AI IDEs, Claude, MCP, GitHub Actions) plus package, secret, SAST, and SCA checks.
+description: Security for AI-assisted development — AI Agent Blast Radius plus a consolidated multi-tool scan (secrets, supply-chain/slopsquatting, SCA, SAST, IaC, CI/CD) that runs every installed OSS scanner and reports findings per type with copy-paste AI fix prompts.
 author: AvinashNutalapati
 
 branding:
@@ -16,16 +16,16 @@ inputs:
     required: false
     default: "3.12"
   fail-on-warnings:
-    description: Treat WARN-level findings as blocking failures.
+    description: Treat WARN-level findings (HIGH+ from the consolidated scan) as blocking failures.
     required: false
     default: "false"
   upload-sarif:
     description: >-
-      Upload SAST/SCA findings to the GitHub Security tab (code scanning).
-      'auto' (default) uploads only on PUBLIC repos, where code scanning is
-      free. Private repos need GitHub Advanced Security — set 'true' to force
-      the upload there, or 'false' to never upload. When skipped, findings still
-      appear in the job log and still gate the build.
+      Upload the consolidated findings to the GitHub Security tab (code scanning).
+      'auto' (default) uploads only on PUBLIC repos, where code scanning is free.
+      Private repos need GitHub Advanced Security — set 'true' to force the upload
+      there, or 'false' to never upload. When skipped, findings still appear in
+      the job summary and still gate the build.
     required: false
     default: "auto"
 
@@ -37,112 +37,93 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
+    # ── Stage 0 — hard gates (these BLOCK the build) ───────────────────────────
     - name: Stage 0 — Package existence check (anti-slopsquatting)
       shell: bash
-      # Pass the caller's workspace explicitly: the script lives in the action's
-      # own checkout (github.action_path), so it must be told which repo to scan.
-      # The action path is quoted — runner roots can contain spaces.
+      # The script lives in the action's own checkout (github.action_path), so it
+      # must be told which repo to scan. Quote the path — runner roots can have spaces.
       run: python "${{ github.action_path }}/scripts/check_packages.py" "$GITHUB_WORKSPACE" --json packages.json
 
     - name: Stage 0 — AI Agent Blast Radius (AI IDEs, Claude, MCP, Actions)
       shell: bash
-      # Report-only by default; gates when the caller repo has a
-      # secure-ai-pipeline.yml policy with fail_on set.
+      # Report-only by default; gates when the caller repo's secure-ai-pipeline.yml
+      # policy sets fail_on.
       run: python "${{ github.action_path }}/scripts/blast_radius.py" "$GITHUB_WORKSPACE" --offline --no-color --json blast.json
 
-    - name: Stage 0 — Secret scan (Gitleaks)
+    - name: Stage 0 — Secret scan (Gitleaks, full git history)
       uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
       env:
-        # Composite actions cannot read `secrets` directly. The caller's
-        # workflow must export it (and check out with fetch-depth: 0 so the
-        # FULL history is scanned, not just HEAD) — see the README quickstart:
+        # Composite actions cannot read `secrets` directly. The caller's workflow
+        # must export it (and check out with fetch-depth: 0 so the FULL history is
+        # scanned) — see the README quickstart:
         #   - uses: actions/checkout@v4
         #     with: { fetch-depth: 0 }
         #   - uses: AvinashNutalapati/secure-ai-pipeline@v2
         #     env:  { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
-        # We render the secrets result in our own unified job summary (from
-        # results.sarif), so suppress gitleaks-action's separate heading.
+        # We render the secrets result in our own unified summary, so suppress
+        # gitleaks-action's separate heading.
         GITLEAKS_ENABLE_SUMMARY: "false"
 
-    - name: Stage 1 — SAST (Semgrep)
+    # ── Stage 1 — consolidated multi-tool scan (report-first) ──────────────────
+    # ONE install + ONE scan, both driven by the scanner registry: every adapter
+    # under scripts/scanners/ is installed (if it declares a ci_install) and run.
+    # Add a scanner there and it appears here automatically — no edits to this file.
+    - name: Stage 1 — Install OSS scanners (best-effort, registry-driven)
       shell: bash
-      run: |
-        pip install semgrep --quiet
-        semgrep scan \
-          --config p/python \
-          --config p/javascript \
-          --config p/security-audit \
-          --config "${{ github.action_path }}/.semgrep/ai-insecure-defaults.yml" \
-          --sarif --output semgrep.sarif
+      run: python "${{ github.action_path }}/scripts/install_scanners.py" || true
 
-    - name: Upload Semgrep SARIF
-      # Upload to the Security tab ONLY where code scanning works: public repos
-      # (free), or when forced on (private + GitHub Advanced Security). On a
-      # private/no-GHAS repo the upload 403s, and a failing `uses:` step inside a
-      # composite action fails the whole run even with continue-on-error — so we
-      # skip rather than try. Findings stay in the job log and the SAST gate.
-      if: ${{ always() && hashFiles('semgrep.sarif') != '' && (inputs.upload-sarif == 'true' || (inputs.upload-sarif == 'auto' && github.event.repository.private == false)) }}
-      continue-on-error: true
-      uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
-      with:
-        sarif_file: semgrep.sarif
-
-    - name: Stage 1 — SAST gate (report-only by default; blocks when fail-on-warnings=true)
+    - name: Stage 1 — Unified scan (every installed scanner, consolidated per type)
       shell: bash
       env:
-        FAIL_ON_WARNINGS: ${{ inputs.fail-on-warnings }}
-      # Report-first like SCA: findings are shown but don't fail the build unless
-      # fail-on-warnings is true (then ERROR-level blocks, warnings too).
-      run: |
-        if [ "${{ inputs.fail-on-warnings }}" = "true" ]; then
-          python "${{ github.action_path }}/scripts/sarif_gate.py" semgrep.sarif --label Semgrep
-        else
-          python "${{ github.action_path }}/scripts/sarif_gate.py" semgrep.sarif --label Semgrep --report-only
-        fi
-
-    - name: Stage 1 — SCA + IaC (Trivy)
-      uses: aquasecurity/trivy-action@b2933f565dbc598b29947660e66259e3c7bc8561 # v0.20.0
-      env:
-        # Pull the vuln DBs from the AWS ECR mirror. The default ghcr.io source
-        # is heavily rate-limited and intermittently fails the DB download,
-        # which produces no SARIF and then breaks the upload step.
+        # Pull Trivy's vuln DBs from the AWS ECR mirror — the default ghcr.io
+        # source is heavily rate-limited and intermittently fails the download.
         TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db:2
         TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db:1
-      with:
-        scan-type: fs
-        format: sarif
-        output: trivy.sarif
-        severity: ${{ inputs.fail-on-warnings == 'true' && 'CRITICAL,HIGH,MEDIUM,LOW' || 'CRITICAL,HIGH' }}
-        # Report-only by default (exit 0): CVE findings are shown but don't fail
-        # the build. Set fail-on-warnings: true to BLOCK on Critical/High CVEs.
-        exit-code: ${{ inputs.fail-on-warnings == 'true' && '1' || '0' }}
-        ignore-unfixed: true
+      # Report-first by default (|| true so a scanner hiccup never breaks the
+      # build); fail-on-warnings makes HIGH+ findings block. scan.json feeds the
+      # summary, sap.sarif feeds code scanning — both written before any gate.
+      run: |
+        if [ "${{ inputs.fail-on-warnings }}" = "true" ]; then
+          python "${{ github.action_path }}/scripts/scan_all.py" "$GITHUB_WORKSPACE" \
+            --only secrets,packages,sca,sast,iac,ci_cd \
+            --no-input --no-color --no-fix-prompts --no-dast \
+            --json scan.json --sarif sap.sarif --fail-on high
+        else
+          python "${{ github.action_path }}/scripts/scan_all.py" "$GITHUB_WORKSPACE" \
+            --only secrets,packages,sca,sast,iac,ci_cd \
+            --no-input --no-color --no-fix-prompts --no-dast \
+            --json scan.json --sarif sap.sarif || true
+        fi
 
-    - name: Upload Trivy SARIF
-      # Same gate as the Semgrep upload: only where code scanning works (skip on
-      # private/no-GHAS). Also requires the SARIF to exist (DB hiccup → no file).
-      if: ${{ always() && hashFiles('trivy.sarif') != '' && (inputs.upload-sarif == 'true' || (inputs.upload-sarif == 'auto' && github.event.repository.private == false)) }}
+    - name: Stage 1 — Upload findings to code scanning
+      # Upload to the Security tab ONLY where code scanning works: public repos
+      # (free), or when forced on (private + GitHub Advanced Security). On a
+      # private/no-GHAS repo the upload 403s; a failing `uses:` step inside a
+      # composite action fails the whole run even with continue-on-error — so we
+      # skip rather than try. Findings stay in the job summary and the gate.
+      if: ${{ always() && hashFiles('sap.sarif') != '' && (inputs.upload-sarif == 'true' || (inputs.upload-sarif == 'auto' && github.event.repository.private == false)) }}
       continue-on-error: true
       uses: github/codeql-action/upload-sarif@f09c1c0a94de965c15400f5634aa42fac8fb8f88 # v3.27.5
       with:
-        sarif_file: trivy.sarif
+        sarif_file: sap.sarif
 
+    # ── Unified job summary (report-only; never fails the build) ───────────────
     - name: Job summary — findings + copy-paste fix prompts
       if: always()
       shell: bash
-      # Report-only: one uniform table per scan type — Secrets, Dependency Trust
-      # (anti-slopsquatting), SCA, SAST, and AI Workflow Blast Radius — in the
-      # run's Step Summary, each with a suggested fix and a copy-paste AI fix
-      # prompt, plus one combined prompt. Never fails the build.
+      # One uniform section per scan type — Secrets, Dependency Trust (anti-
+      # slopsquatting), Dependencies (SCA), SAST, IaC, CI/CD, AI Workflow Blast
+      # Radius — each consolidating every tool that ran, with a suggested fix and
+      # a copy-paste AI fix prompt, plus one combined prompt.
       run: |
         python "${{ github.action_path }}/scripts/job_summary.py" \
-          --scan secrets "Secrets (Gitleaks)" results.sarif \
+          --scan secrets "Secrets (Gitleaks — full history)" results.sarif \
           --scan packages "Dependency Trust (anti-slopsquatting)" packages.json \
-          --scan sca "Dependencies (Trivy SCA)" trivy.sarif \
-          --scan sast "SAST (Semgrep)" semgrep.sarif \
-          --scan ai_posture "AI Workflow Blast Radius" blast.json
+          --scan ai_posture "AI Workflow Blast Radius" blast.json \
+          --scan-all scan.json
 
+    # ── Stage 2 — DAST (report only) ───────────────────────────────────────────
     - name: Stage 2 — Stage ZAP rules into the workspace
       if: ${{ inputs.staging-url != '' }}
       shell: bash

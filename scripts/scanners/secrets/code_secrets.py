@@ -1,4 +1,6 @@
 """
+secure-ai-pipeline:rule-source — excluded from the built-in scan.
+
 Hardcoded-secret patterns for scanning SOURCE CODE — the regex set the local
 pipeline + scan_all's built-in secrets fallback apply line by line. Distinct
 from config_secrets.py (which scans .env / mcp.json / Claude config) and from

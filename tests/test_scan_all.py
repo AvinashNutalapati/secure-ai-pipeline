@@ -46,6 +46,18 @@ def test_builtin_sast_flags_insecure_python(tmp_path):
     assert "Flask" in titles or "debug" in titles
 
 
+def test_builtin_sast_skips_rule_source_files(tmp_path):
+    # A rule-definition file (pattern strings that look insecure) must NOT be
+    # flagged by the regex fallback — it carries the rule-source marker.
+    _w(tmp_path, "catalog.py",
+       '"""secure-ai-pipeline:rule-source"""\n'
+       'PATTERNS = ["app.run(..., debug=True, ...)", "subprocess.x(..., shell=True)"]\n')
+    assert sa.builtin_sast(tmp_path) == []
+    # But the same code in a normal file IS flagged.
+    _w(tmp_path, "real.py", "app.run(debug=True)\n")
+    assert any("Flask" in f.title or "debug" in f.title for f in sa.builtin_sast(tmp_path))
+
+
 def test_builtin_sca_offline_is_empty_without_requirements(tmp_path):
     _w(tmp_path, "app.py", "import os\n")
     assert sa.builtin_sca(tmp_path, offline=True) == []
@@ -68,8 +80,17 @@ def test_orchestrate_only_subset(tmp_path):
 
 def test_orchestrate_default_runs_all_non_dast(tmp_path):
     result = sa.orchestrate(tmp_path, offline=True, only=[])
-    assert set(result["layers"]) == {"secrets", "sca", "sast", "ai_posture"}
+    # The core layers (built-in scanners) always run. Tool-only layers like
+    # iac/ci_cd appear when their scanner is installed (e.g. the Action installs
+    # checkov/zizmor), so assert the guaranteed set as a subset to stay env-stable.
+    assert {"secrets", "packages", "sca", "sast", "ai_posture"} <= set(result["layers"])
     assert "dast" not in result["layers"]                   # DAST only with a URL
+
+
+def test_orchestrate_packages_layer_is_split_from_sca(tmp_path):
+    # Slopsquatting now lives in its own 'packages' layer, not folded into sca.
+    result = sa.orchestrate(tmp_path, offline=True, only=["packages", "sca"])
+    assert "packages" in result["layers"] and "sca" in result["layers"]
 
 
 def test_from_ext_normalizes_severity():
@@ -108,6 +129,29 @@ def test_fix_prompt_contains_findings_and_role():
     assert "SQL injection via f-string" in text
     assert "app.py:10" in text
     assert "security engineer" in text.lower()
+
+
+def test_render_sarif_shape():
+    result = {"layers": {"sast": sa.Layer("sast", "built-in", [
+        sa.ScanFinding("sast", "HIGH", "SQL injection", "detail", "app.py", 10,
+                       "use parameterised queries", "built-in"),
+        sa.ScanFinding("sast", "INFO", "noise", "", "x", 0, "", "built-in")])}}
+    doc = sa.render_sarif(result)
+    assert doc["version"] == "2.1.0"
+    run = doc["runs"][0]
+    assert run["tool"]["driver"]["name"] == "Secure AI Pipeline"
+    assert len(run["results"]) == 1                       # INFO excluded
+    res = run["results"][0]
+    assert res["level"] == "error"
+    assert res["locations"][0]["physicalLocation"]["region"]["startLine"] == 10
+    assert run["tool"]["driver"]["rules"][0]["properties"]["security-severity"] == "8.0"
+
+
+def test_render_sarif_clamps_zero_line():
+    result = {"layers": {"secrets": sa.Layer("secrets", "built-in", [
+        sa.ScanFinding("secrets", "CRITICAL", "key", "", "a.env", 0, "rotate", "built-in")])}}
+    res = sa.render_sarif(result)["runs"][0]["results"][0]
+    assert res["locations"][0]["physicalLocation"]["region"]["startLine"] == 1  # SARIF needs >=1
 
 
 def test_write_fix_prompts_only_for_layers_with_findings(tmp_path):

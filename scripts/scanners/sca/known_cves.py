@@ -1,4 +1,6 @@
 """
+secure-ai-pipeline:rule-source — excluded from the built-in scan.
+
 SCA — curated CVE data for pinned dependency versions, keyed by
 (normalised_package_name, version). The single source for the offline CVE
 checks (run_pipeline.py → npx scan, and mirrored by the MCP server). The

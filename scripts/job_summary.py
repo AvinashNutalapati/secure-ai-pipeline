@@ -25,23 +25,13 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from scanners import registry  # noqa: E402  (per-type AI fix-prompt wording + labels)
+
 _RANK = {"error": 0, "warning": 1, "note": 2, "none": 3}
 _EMOJI = {"error": "🟥", "warning": "🟧", "note": "🟦", "none": "⬜"}
 
-_INTRO = {
-    "secrets": "remove every hardcoded secret, replace it with an environment "
-               "variable or secrets-manager lookup, and note that the exposed value must be rotated",
-    "sca": "upgrade each vulnerable dependency to the fixed version shown (or "
-           "replace the package if no fix exists)",
-    "sast": "fix each insecure code pattern using the secure idiom the rule describes",
-    "ai_posture": "harden the AI workflow: pin actions to commit SHAs, remove "
-                  "pull_request_target where possible, scope agent/Claude permissions, and "
-                  "stop passing long-lived secrets to MCP servers",
-    "packages": "remove or correct each hallucinated/non-existent import and verify "
-                "the real package name on PyPI/npm before installing",
-}
-
-# blast_radius severities → SARIF-style levels used by the renderer.
+# blast_radius / scan_all severities → SARIF-style levels used by the renderer.
 _SEV_TO_LEVEL = {"CRITICAL": "error", "HIGH": "error", "MEDIUM": "warning",
                  "LOW": "note", "INFO": "none"}
 
@@ -134,6 +124,41 @@ def load_packages(path):
     return out
 
 
+def load_scan_all(path):
+    """Read scan_all.py --json output into {scan_type: [finding rows]}.
+
+    This is how the consolidated multi-tool scan (every installed OSS scanner,
+    merged per type by scan_all) feeds the summary: one section per type, with
+    each tool's findings already grouped together. INFO is dropped."""
+    data = _read_json(path)
+    if data is None:
+        return {}
+    out = {}
+    for stype, layer in (data.get("layers", {}) or {}).items():
+        findings_raw = layer.get("findings", []) or []
+        # A type whose scanner wasn't installed didn't actually run — skip it so
+        # the summary never claims "no findings" for something it never scanned.
+        if not findings_raw and layer.get("engine", "") in ("not run", "unavailable", ""):
+            continue
+        rows = []
+        for f in findings_raw:
+            sev = (f.get("severity") or "INFO").upper()
+            if sev == "INFO":
+                continue
+            fix = f.get("fix", "")
+            rows.append({
+                "level": _SEV_TO_LEVEL.get(sev, "note"),
+                "rule": f.get("tool", "") or stype,
+                "msg": f.get("title", "") or f.get("detail", ""),
+                "rule_obj": {"help": {"text": fix}},
+                "file": f.get("file", ""), "line": f.get("line") or "",
+                "tool": f.get("tool", ""), "fix": fix,
+            })
+        rows.sort(key=lambda x: _RANK.get(x["level"], 9))
+        out[stype] = rows
+    return out
+
+
 def _load_for(scan_type, path):
     if scan_type == "ai_posture":
         return load_blast_radius(path)
@@ -146,6 +171,10 @@ def title_and_fix(scan_type, f):
     """Return (title, suggested_fix). For SCA, pull Trivy's fixed-version."""
     msg, rid = f["msg"], f["rule"]
     first = msg.splitlines()[0] if msg else rid
+    # scan_all-sourced findings carry their own explicit fix — use it verbatim;
+    # the per-type SARIF heuristics below are only for tool-native SARIF.
+    if f.get("fix"):
+        return (first or rid)[:120], f["fix"]
     if scan_type == "secrets":
         return (first or rid)[:120], (
             "Remove the secret, load it from the environment / a secrets manager, "
@@ -180,14 +209,59 @@ def _esc(s):
 def _prompt(scan_type, label, lines):
     return (
         "You are a senior application-security engineer working in this repository.\n"
-        f"Task: {_INTRO.get(scan_type, 'fix the security findings below')}.\n\n"
+        f"Task: {registry.intro_for(scan_type)}.\n\n"
         "Rules:\n" + "\n".join(_RULES) + "\n\n"
         f"Findings — {label}:\n" + "\n".join(lines)
     )
 
 
-def build(scans, section_only=False):
+def _dedup(findings):
+    """Collapse identical findings (same level/message/location) so that two
+    tools reporting the exact same issue show once. Different wording stays."""
+    seen, out = set(), []
+    for f in findings:
+        key = (f.get("level"), f.get("msg"), f.get("file"), f.get("line"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f)
+    return out
+
+
+def _engines_line(findings):
+    """A small line naming every tool that contributed to this section — the
+    visible proof that the type was scanned by the whole stack, consolidated."""
+    tools = []
+    for f in findings:
+        t = f.get("tool")
+        if t and t not in tools:
+            tools.append(t)
+    return f"<sub>🔧 engines: {', '.join(tools)}</sub>" if tools else ""
+
+
+def _merge_sections(scans, scan_all):
+    """Order = explicit --scan inputs first (as given), then any scan_all-only
+    types in canonical registry order. Findings for a type present in both merge.
+    Returns [(type, label, findings|None)] — None means the type didn't run."""
+    ordered, seen = [], set()
+    for scan_type, label, path in scans:
+        base = _load_for(scan_type, path)
+        extra = scan_all.get(scan_type)
+        findings = None if (base is None and extra is None) else (base or []) + (extra or [])
+        ordered.append((scan_type, label, findings))
+        seen.add(scan_type)
+    for stype in registry.SCAN_TYPE_KEYS:
+        if stype in scan_all and stype not in seen:
+            ordered.append((stype, registry.label_for(stype), scan_all[stype]))
+            seen.add(stype)
+    return ordered
+
+
+def build(scans, section_only=False, scan_all=None):
     """scans = [(type, label, path)]. Returns the markdown + a log digest.
+
+    scan_all = {type: [rows]} from load_scan_all() merges the consolidated
+    multi-tool scan in, so each section shows every tool's findings together.
 
     section_only=True omits the top header and the combined prompt — used when
     each job in a multi-job workflow contributes its own section to the shared
@@ -197,25 +271,27 @@ def build(scans, section_only=False):
     combined = []  # (label, lines)
     any_findings = False
 
-    for scan_type, label, path in scans:
-        findings = _load_for(scan_type, path)
+    for scan_type, label, findings in _merge_sections(scans, scan_all or {}):
         if findings is None:
             md += [f"### {label} — not run", ""]
             log.append(f"  [{label}] not run")
             continue
+        findings = _dedup(findings)
         if not findings:
             md += [f"### {label} — ✅ no findings", ""]
             log.append(f"  [{label}] ✅ no findings")
             continue
         any_findings = True
         log.append(f"  [{label}] ⚠️ {len(findings)} finding(s)")
-        md += [f"### {label} — ⚠️ {len(findings)} finding(s)", "",
-               "| Severity | Finding | Location | Suggested fix |",
-               "|---|---|---|---|"]
+        md += [f"### {label} — ⚠️ {len(findings)} finding(s)", ""]
+        engines = _engines_line(findings)
+        if engines:
+            md += [engines, ""]
+        md += ["| Severity | Finding | Location | Suggested fix |", "|---|---|---|---|"]
         lines = []
         for f in findings[:100]:
             title, fix = title_and_fix(scan_type, f)
-            loc = f"{f['file']}:{f['line']}" if f["file"] and f["line"] else (f["file"] or "—")
+            loc = f"{f['file']}:{f['line']}" if f.get("file") and f.get("line") else (f.get("file") or "—")
             md.append(f"| {_EMOJI.get(f['level'], '')} {f['level']} | {_esc(title)} "
                       f"| `{_esc(loc)}` | {_esc(fix)} |")
             lines.append(f"- [{f['level'].upper()}] {title}  ({loc}) — fix: {fix}")
@@ -247,11 +323,15 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scan", nargs=3, action="append", default=[],
                    metavar=("TYPE", "LABEL", "PATH"))
+    p.add_argument("--scan-all", default="", metavar="SCAN_JSON",
+                   help="scan_all.py --json output: its per-type layers are merged "
+                        "into the matching sections (the consolidated multi-tool scan).")
     p.add_argument("--section-only", action="store_true",
                    help="Omit the top header + combined prompt (one job's section).")
     args = p.parse_args(argv)
 
-    text, log = build(args.scan, section_only=args.section_only)
+    scan_all = load_scan_all(args.scan_all) if args.scan_all else None
+    text, log = build(args.scan, section_only=args.section_only, scan_all=scan_all)
     step = os.environ.get("GITHUB_STEP_SUMMARY")
     if step:
         try:

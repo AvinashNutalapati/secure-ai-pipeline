@@ -152,6 +152,47 @@ def test_build_renders_blast_radius_and_packages_sections(tmp_path):
     assert "Fix prompt — AI Workflow Blast Radius" in md
 
 
+# ── scan_all consolidation (every installed OSS tool, merged per type) ───────
+
+def test_load_scan_all_maps_layers_and_drops_info(tmp_path):
+    p = _w(tmp_path, "scan.json", {"layers": {
+        "sca": {"engine": "trivy", "note": "", "findings": [
+            {"severity": "HIGH", "title": "lodash — CVE-1", "fix": "Upgrade lodash to 4.17.21.",
+             "file": "lock.json", "line": 0, "tool": "trivy"},
+            {"severity": "INFO", "title": "noise", "fix": "", "file": "x", "line": 0, "tool": "trivy"}]}}})
+    out = js.load_scan_all(p)
+    assert "sca" in out and len(out["sca"]) == 1          # INFO dropped
+    row = out["sca"][0]
+    assert row["level"] == "error" and row["tool"] == "trivy"
+    assert row["fix"].startswith("Upgrade")
+
+
+def test_title_and_fix_uses_explicit_fix_for_scan_all_findings():
+    # Without the short-circuit, the sca branch would invent "No fixed version".
+    f = {"msg": "b 1.0 — CVE-7", "rule": "grype", "rule_obj": {},
+         "fix": "Upgrade b to 1.1.", "tool": "grype"}
+    title, fix = js.title_and_fix("sca", f)
+    assert fix == "Upgrade b to 1.1." and "CVE-7" in title
+
+
+def test_build_merges_scan_all_into_sections(tmp_path):
+    sca_sarif = _w(tmp_path, "trivy.sarif", _sarif([_result(
+        "CVE-9", "error", "Package: a\nFixed Version: 2.0", "a", 1)]))
+    scan_all = js.load_scan_all(_w(tmp_path, "scan.json", {"layers": {
+        "sca": {"engine": "grype", "findings": [
+            {"severity": "HIGH", "title": "b 1.0 — CVE-7", "fix": "Upgrade b to 1.1.",
+             "file": "lock", "line": 0, "tool": "grype"}]},
+        "iac": {"engine": "checkov", "findings": [
+            {"severity": "MEDIUM", "title": "S3 bucket public", "fix": "Make it private.",
+             "file": "main.tf", "line": 3, "tool": "checkov"}]}}}))
+    md, _ = js.build([("sca", "Dependencies (SCA)", sca_sarif)], scan_all=scan_all)
+    assert "2.0" in md                       # the SARIF Trivy finding's fixed version
+    assert "Upgrade b to 1.1." in md         # the scan_all grype finding, merged in
+    assert "engines:" in md and "grype" in md
+    # iac is a scan_all-only type → its own section, labelled from the registry
+    assert "Infrastructure as Code" in md and "S3 bucket public" in md
+
+
 def test_section_only_omits_header_and_combined_prompt(tmp_path):
     pkgs = _w(tmp_path, "p.json", {"blocked": [
         {"package": "evilpkg", "registry": "pypi", "file": "a"}], "warnings": [], "ok": []})
