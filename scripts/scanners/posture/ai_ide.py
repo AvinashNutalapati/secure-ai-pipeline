@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import Finding, rel, skip
+from ..base import Finding, rel, skip
 
 # (glob, tool label)
 RULE_SOURCES = [

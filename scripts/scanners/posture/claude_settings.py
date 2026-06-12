@@ -12,7 +12,7 @@ import json
 import re
 from pathlib import Path
 
-from .base import Finding, rel, skip
+from ..base import Finding, rel, skip
 
 CLAUDE_SETTINGS_NAMES = {"settings.json", "settings.local.json"}
 

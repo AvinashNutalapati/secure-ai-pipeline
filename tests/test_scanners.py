@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import blast_radius as br
-from scanners import ai_ide, claude_settings, github_actions, mcp
+from scanners.posture import ai_ide, claude_settings, github_actions, mcp_config as mcp
 
 
 def _w(tmp_path, rel, body):

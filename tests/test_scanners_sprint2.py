@@ -2,7 +2,7 @@
 
 import json
 
-from scanners import prompt_privacy, secrets_in_config
+from scanners.secrets import prompt_privacy, config_secrets as secrets_in_config
 
 
 def _w(tmp_path, rel, body):

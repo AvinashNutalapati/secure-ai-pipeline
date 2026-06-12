@@ -27,18 +27,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scanners import SEVERITIES  # noqa: E402
-from scanners import ai_ide, claude_settings, github_actions, mcp  # noqa: E402
-from scanners import prompt_privacy, secrets_in_config  # noqa: E402
+from scanners.posture import ai_ide, claude_settings, github_actions, mcp_config  # noqa: E402
+from scanners.secrets import config_secrets, prompt_privacy  # noqa: E402
 from scanners.base import Finding, grade_of, score_from_counts  # noqa: E402
 import policy as policy_mod  # noqa: E402
 
 OFFLINE_SCANNERS = {
     "ai_ide": ai_ide.scan,
     "claude": claude_settings.scan,
-    "mcp": mcp.scan,
+    "mcp": mcp_config.scan,
     "github_actions": github_actions.scan,
     "prompt_privacy": prompt_privacy.scan,
-    "secrets": secrets_in_config.scan,
+    "secrets": config_secrets.scan,
 }
 
 _SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}  # CRITICAL=0 .. INFO=4

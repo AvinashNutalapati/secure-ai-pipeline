@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import Finding, rel, skip
+from ..base import Finding, rel, skip
 
 USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*['\"]?([^'\"\s#]+)['\"]?")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")

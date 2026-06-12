@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import SECRET_VALUE_PATTERNS, Finding, rel, skip
+from ..base import SECRET_VALUE_PATTERNS, Finding, rel, skip
 
 # Files whose text becomes model context / agent instructions.
 PROMPT_GLOBS = [

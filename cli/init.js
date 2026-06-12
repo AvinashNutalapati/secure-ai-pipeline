@@ -21,16 +21,25 @@ const { spawnSync } = require("child_process");
 const PKG_ROOT = path.join(__dirname, "..");
 const TARGET = process.cwd();
 
-// Every bundled scanner module is discovered at runtime — no hand-maintained
-// list that can drift from the package contents and break installed pipelines.
+// Every bundled scanner module is discovered at runtime (recursively, so the
+// scan-type subfolders are included) — no hand-maintained list that can drift
+// from the package contents and break installed pipelines.
 function scannerFiles() {
-  const dir = path.join(PKG_ROOT, "scripts", "scanners");
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".py"))
-    .sort()
-    .map((f) => path.join("scripts", "scanners", f));
+  const root = path.join(PKG_ROOT, "scripts", "scanners");
+  if (!fs.existsSync(root)) return [];
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "__pycache__") walk(full);
+      } else if (entry.name.endsWith(".py")) {
+        out.push(path.relative(PKG_ROOT, full));
+      }
+    }
+  };
+  walk(root);
+  return out.sort();
 }
 
 // Files to copy, relative to both the package root and the target repo.

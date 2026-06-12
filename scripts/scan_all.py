@@ -35,7 +35,7 @@ import check_packages  # noqa: E402
 import run_pipeline as rp  # noqa: E402
 import blast_radius as br  # noqa: E402
 import policy as policy_mod  # noqa: E402
-from scanners import secrets_in_config, prompt_privacy  # noqa: E402
+from scanners.secrets import config_secrets as secrets_in_config, prompt_privacy  # noqa: E402
 
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 _RANK = {s: i for i, s in enumerate(SEVERITIES)}

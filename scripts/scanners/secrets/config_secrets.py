@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import SECRET_VALUE_PATTERNS, Finding, rel, skip
+from ..base import SECRET_VALUE_PATTERNS, Finding, rel, skip
 
 CONFIG_BASENAMES = {
     "mcp.json", ".mcp.json", "claude_desktop_config.json",

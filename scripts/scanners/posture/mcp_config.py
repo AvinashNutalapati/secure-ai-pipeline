@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from .base import Finding, rel, skip
+from ..base import Finding, rel, skip
 
 # Config files used by the major MCP hosts.
 MCP_FILENAMES = {
