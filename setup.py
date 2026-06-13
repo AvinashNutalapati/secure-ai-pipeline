@@ -1,12 +1,42 @@
-from setuptools import setup, find_packages
+from pathlib import Path
+
+from setuptools import find_packages, setup
+
+# Rendered as the project description on PyPI (embedded in the wheel/sdist metadata
+# at build time — the file itself is not needed at runtime).
+_LONG_DESCRIPTION = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="secure-ai-pipeline",
     version="3.2.1",
     description="Security for AI-assisted development — AI Agent Blast Radius checkup + code pipeline",
+    long_description=_LONG_DESCRIPTION,
+    long_description_content_type="text/markdown",
     author="AvinashNutalapati",
     license="MIT",
     url="https://github.com/AvinashNutalapati/secure-ai-pipeline",
+    project_urls={
+        "Homepage": "https://mirawyn.com",
+        "Source": "https://github.com/AvinashNutalapati/secure-ai-pipeline",
+        "Issues": "https://github.com/AvinashNutalapati/secure-ai-pipeline/issues",
+    },
+    keywords=[
+        "security", "devsecops", "mcp", "slopsquatting", "supply-chain",
+        "sast", "sca", "ai-code-security", "claude", "code-scanning",
+    ],
+    classifiers=[
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Topic :: Security",
+        "Topic :: Software Development :: Quality Assurance",
+        "Environment :: Console",
+    ],
     # Only the extensions package ships in the wheel. scripts/ is delivered by the
     # installer/Action; packaging it would drop an orphan `scripts.scanners` (no
     # __init__.py) and squat generic top-level names. The MCP server no longer needs

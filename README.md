@@ -184,6 +184,7 @@ One install gives you the `sap-mcp` command, then point your assistant at it:
 ```bash
 pipx install git+https://github.com/AvinashNutalapati/secure-ai-pipeline.git
 # (or `pipx install secure-ai-pipeline` once it's on PyPI)
+sap-mcp --selftest          # verify it works before wiring it up
 ```
 
 - **Claude Code** — `claude mcp add secure-ai-pipeline -- sap-mcp`
@@ -191,11 +192,15 @@ pipx install git+https://github.com/AvinashNutalapati/secure-ai-pipeline.git
   `[mcp_servers.secure-ai-pipeline]` / `command = "sap-mcp"`
 - **Cursor / Windsurf / Cline** — add to the MCP config:
   `{ "mcpServers": { "secure-ai-pipeline": { "command": "sap-mcp" } } }`
+- **Claude Desktop** — one-click: build a `.dxt` bundle
+  (`python3 extensions/claude_mcp/dxt/build_dxt.py`) and install it via
+  **Settings → Extensions → Install from file**.
 
-Your assistant can now call `check_package`, `sast_scan`, `sca_scan`, `full_scan`,
-and `scan_repo` mid-session — ask it to *"verify that package exists before
-importing it"* or *"scan this code before you give it to me."* The snippet tools
-work standalone; `scan_repo` runs the full multi-tool scan when the pipeline is
+Your assistant can now call `check_package`, `verify_install`, `sast_scan`,
+`sca_scan`, `full_scan`, and `scan_repo` mid-session — ask it to *"verify that
+package exists before importing it"* or *"scan this code before you give it to
+me."* Every tool returns a **verdict** (block / warn / ok). The snippet tools work
+standalone; `scan_repo` runs the full multi-tool scan when the pipeline is
 present. ([details](extensions/claude_mcp/README.md))
 
 ### OpenAI Custom GPT

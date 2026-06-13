@@ -1,0 +1,35 @@
+{
+  "dxt_version": "0.1",
+  "name": "secure-ai-pipeline",
+  "display_name": "Secure AI Pipeline",
+  "version": "__VERSION__",
+  "description": "Catch AI-generated security mistakes mid-conversation: hallucinated / slopsquatting packages, insecure code patterns, and CVE-laden dependencies.",
+  "long_description": "Exposes the Secure AI Pipeline checks as MCP tools the assistant can call BEFORE it installs a dependency or hands you generated code. Every tool returns a verdict (block / warn / ok). Anti-slopsquatting package verification (verify_install, check_package), snippet SAST (sast_scan), dependency CVE checks (sca_scan), a combined gate (full_scan), and a full multi-tool repo scan (scan_repo). No accounts, no SaaS — it runs locally.",
+  "author": {
+    "name": "AvinashNutalapati",
+    "url": "https://github.com/AvinashNutalapati"
+  },
+  "homepage": "https://mirawyn.com",
+  "documentation": "https://github.com/AvinashNutalapati/secure-ai-pipeline#readme",
+  "license": "MIT",
+  "keywords": ["security", "slopsquatting", "sast", "supply-chain", "ai-code-security"],
+  "server": {
+    "type": "python",
+    "entry_point": "server/main.py",
+    "mcp_config": {
+      "command": "python3",
+      "args": ["${__dirname}/server/main.py"]
+    }
+  },
+  "tools": [
+    { "name": "check_package", "description": "Verify a package exists on PyPI or npm before installing it (anti-slopsquatting)" },
+    { "name": "verify_install", "description": "Check every package in an install command (pip/npm/yarn/pnpm/uv) before running it" },
+    { "name": "sast_scan", "description": "Scan a code snippet for insecure patterns" },
+    { "name": "sca_scan", "description": "Check pinned dependency versions for known CVEs" },
+    { "name": "full_scan", "description": "Run package + SAST + SCA checks with one blocking decision" },
+    { "name": "scan_repo", "description": "Full multi-tool security scan of a project directory" }
+  ],
+  "prompts": [
+    { "name": "secure_review", "description": "Make the assistant verify deps + scan generated code before finalizing" }
+  ]
+}

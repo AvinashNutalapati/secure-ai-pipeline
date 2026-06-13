@@ -47,6 +47,7 @@ verify; never treat as missing). `full_scan` only sets `blocked` for packages
 ```bash
 pipx install git+https://github.com/AvinashNutalapati/secure-ai-pipeline.git
 # (or `pipx install secure-ai-pipeline` once it's on PyPI)
+sap-mcp --selftest          # rules load? PyPI/npm reachable? (exits 0 if healthy)
 ```
 
 ## Connect (Claude Code · Codex · Cursor)
@@ -66,6 +67,37 @@ Ask the assistant to *"check that package exists before importing it"* or *"scan
 code for security issues"* and it will call these tools. The four snippet tools work
 from any install; `scan_repo` runs the full multi-tool scan when the pipeline is present
 (this repo, or a project where `npx secure-ai-pipeline init` dropped it in).
+
+## Claude Desktop (one-click)
+
+Claude **Desktop** (the Mac/Windows app, not the CLI) installs MCP servers as `.dxt`
+bundles — no terminal, no pipx. Build one and install it:
+
+```bash
+python3 extensions/claude_mcp/dxt/build_dxt.py
+# -> dist/secure-ai-pipeline-<version>.dxt
+```
+
+Then **Settings → Extensions → Install from file** → pick the `.dxt`. The bundle is
+self-contained (the `mcp` SDK + deps are vendored inside it), so it needs nothing
+pre-installed — **build it on the machine you'll install on** (the vendored deps
+include a compiled binary). Prefer a config file? Claude Desktop also reads the same
+JSON shape as Cursor, given `sap-mcp` is on PATH from the pipx install above:
+
+```json
+{ "mcpServers": { "secure-ai-pipeline": { "command": "sap-mcp" } } }
+```
+
+## Publishing to PyPI (maintainers)
+
+So `pipx install secure-ai-pipeline` works without the `git+https` URL. Build into a
+clean dir (so the `.dxt` in `dist/` isn't uploaded), then check + upload:
+
+```bash
+python3 -m build --outdir build/pypi      # sdist + wheel from setup.py
+twine check build/pypi/*                   # validates metadata + long_description
+twine upload build/pypi/*                  # needs a PyPI account + API token
+```
 
 ## REST server (for the OpenAI GPT Action)
 

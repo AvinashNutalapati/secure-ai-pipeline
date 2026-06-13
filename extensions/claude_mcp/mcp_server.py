@@ -210,10 +210,61 @@ def secure_review() -> str:
     )
 
 
-def main() -> None:
-    """Console-script entry point (`sap-mcp`) — runs the MCP server over stdio."""
+def _version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("secure-ai-pipeline")
+    except PackageNotFoundError:
+        return "dev"
+
+
+def _selftest() -> int:
+    """Verify the server is healthy WITHOUT an MCP client: the bundled rules load,
+    a known-bad snippet is caught, and the registries are reachable. Exit 0 if the
+    core (rules + snippet scan) works; network checks are informational only."""
+    n_rules, n_cves = len(rules.SAST_RULES), len(rules.KNOWN_CVES)
+    core_ok = bool(n_rules) and bool(rules.sast_scan("eval(request.data)"))
+    print(f"secure-ai-pipeline MCP server  v{_version()}")
+    print(f"  {'PASS' if n_rules else 'FAIL'}  rules loaded ({n_rules} SAST rules, "
+          f"{n_cves} CVE entries)")
+    print(f"  {'PASS' if core_ok else 'FAIL'}  snippet scan works (catches eval-on-request)")
+    for reg, sample in (("pypi", "requests"), ("npm", "react")):
+        res = _check_package(sample, reg)
+        ok = res.get("exists") is not None
+        print(f"  {'PASS' if ok else 'skip'}  {reg} reachable "
+              f"(check_package('{sample}') -> exists={res.get('exists')})")
+    print()
+    if core_ok:
+        print("Healthy. Add it to your assistant:")
+        print("  Claude Code:  claude mcp add secure-ai-pipeline -- sap-mcp")
+        print('  Codex:        ~/.codex/config.toml -> '
+              '[mcp_servers.secure-ai-pipeline] command = "sap-mcp"')
+        return 0
+    print("FAILED — the bundled rules did not load. Reinstall the package.")
+    return 1
+
+
+def main(argv=None) -> int:
+    """Console-script entry point (`sap-mcp`). With no args it serves the MCP
+    protocol over stdio (what `claude mcp add` launches); the flags are for a human
+    verifying the install, never used by an MCP client."""
+    import argparse
+    p = argparse.ArgumentParser(
+        prog="sap-mcp",
+        description="Secure AI Pipeline MCP server (stdio JSON-RPC). Run with no "
+                    "arguments to serve; use the flags to verify the install.")
+    p.add_argument("--version", action="store_true", help="Print the version and exit.")
+    p.add_argument("--selftest", action="store_true",
+                   help="Check rules load + registry reachability, then exit.")
+    args = p.parse_args(argv)
+    if args.version:
+        print(_version())
+        return 0
+    if args.selftest:
+        return _selftest()
     mcp.run()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
