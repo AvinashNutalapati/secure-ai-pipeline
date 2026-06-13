@@ -119,6 +119,22 @@ def test_gha_sha_pinned_is_clean(tmp_path):
     assert github_actions.scan(tmp_path) == []
 
 
+def test_gha_own_action_v3_is_exempt(tmp_path):
+    # We recommend `uses: AvinashNutalapati/secure-ai-pipeline@v3` in the README,
+    # so the scanner must not flag the user for following its own quickstart — but
+    # a third-party unpinned action, and a same-named fork, still flag.
+    _w(tmp_path, ".github/workflows/security.yml",
+       "on: push\njobs:\n  b:\n    steps:\n"
+       "      - uses: AvinashNutalapati/secure-ai-pipeline@v3\n"
+       "      - uses: actions/checkout@v4\n"
+       "      - uses: attacker/secure-ai-pipeline@v3\n")
+    flagged = [f.title for f in github_actions.scan(tmp_path)
+               if f.rule_id == "gha-unpinned-action"]
+    assert not any("AvinashNutalapati/secure-ai-pipeline" in t for t in flagged)
+    assert any("actions/checkout@v4" in t for t in flagged)
+    assert any("attacker/secure-ai-pipeline" in t for t in flagged)   # fork NOT exempt
+
+
 def test_gha_env_block_after_run_not_flagged(tmp_path):
     # Passing github.event.* via env: is the scanner's OWN recommended fix —
     # it must not be flagged (the old sticky in_run flag flagged everything

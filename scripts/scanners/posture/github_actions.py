@@ -41,6 +41,17 @@ def _is_pinned(ref: str) -> bool:
     return bool(SHA_RE.match(ref.rsplit("@", 1)[1]))
 
 
+# Our own action is referenced by its @v3 major tag in the quickstart we ship.
+# Don't flag a user for invoking the scanner the exact way our README recommends:
+# @v3 lets them auto-receive security fixes, and we control the tag. (A fork under
+# a different owner with the same repo name is NOT exempt — full owner/repo match.)
+_OWN_ACTION = "avinashnutalapati/secure-ai-pipeline"
+
+
+def _is_own_action(ref: str) -> bool:
+    return ref.split("@", 1)[0].lower() == _OWN_ACTION
+
+
 def scan(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     for wf in _workflow_files(root):
@@ -98,7 +109,7 @@ def scan(root: Path) -> list[Finding]:
             if not m:
                 continue
             ref = m.group(1)
-            if _is_pinned(ref):
+            if _is_pinned(ref) or _is_own_action(ref):
                 continue
             owner = ref.split("/")[0] if "/" in ref else ref
             first_party = owner in ("actions", "github")

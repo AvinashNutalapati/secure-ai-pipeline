@@ -37,7 +37,7 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2 (SHA-pinned — the practice this tool checks for)
         with:
           fetch-depth: 0                              # full git history for the secret scan
       - uses: AvinashNutalapati/secure-ai-pipeline@v3
