@@ -9,12 +9,12 @@ registry check (`registry.py`):
 
 | File | Protocol | Used by |
 |------|----------|---------|
-| `mcp_server.py` | **MCP over stdio** (JSON-RPC, via the `mcp` SDK) | **Claude Code** (`claude mcp add`) |
+| `mcp_server.py` | **MCP over stdio** (JSON-RPC, via the `mcp` SDK) | **Claude Code · Codex CLI · Cursor / Windsurf / Cline** |
 | `server.py` | **REST/HTTP** (FastAPI) | **OpenAI Custom GPT Action** (see `../openai-gpt/`) |
 
-> `claude mcp add` speaks the Model Context Protocol over stdio, **not** plain HTTP — so
-> Claude Code uses `mcp_server.py`, not the FastAPI app. Use `server.py` only for the
-> REST/GPT-Action path.
+> Stdio MCP is what Claude Code, Codex, and Cursor speak — they use `mcp_server.py`.
+> **ChatGPT** is the odd one out: it uses **GPT Actions (REST)**, so it talks to
+> `server.py` + `../openai-gpt/openapi.yaml`, not the stdio MCP server.
 
 ## Tools
 
@@ -24,6 +24,7 @@ registry check (`registry.py`):
 | `sast_scan` | `{ code, language }` | `{ findings: [{ rule, line, severity, message, fix }] }` |
 | `sca_scan` | `{ requirements }` | `{ vulnerabilities: [{ package, version, cve, severity, fix_version }] }` |
 | `full_scan` | `{ code, requirements, language }` | `{ findings, blocked, summary }` |
+| `scan_repo` | `{ path, deep }` | `{ root, layers }` — full multi-tool scan (needs the pipeline) |
 
 `exists` is **tri-state**: `true` (found), `false` (confirmed missing — a
 slopsquatting risk, do not install), or `null` (registry unreachable — could not
@@ -32,32 +33,36 @@ verify; never treat as missing). `full_scan` only sets `blocked` for packages
 
 ## Install
 
-```bash
-cd extensions/claude_mcp
-pip install -r requirements.txt
-```
-
-## Connect to Claude Code (MCP, stdio)
-
-Run from the repo root so the `extensions.claude_mcp` package resolves:
+`pipx` gives you a self-contained `sap-mcp` command — no need to be inside this repo
+(the rules ship bundled in the wheel as `_rules_data.py`):
 
 ```bash
-claude mcp add secure-ai-pipeline -- python -m extensions.claude_mcp.mcp_server
+pipx install git+https://github.com/AvinashNutalapati/secure-ai-pipeline.git
+# (or `pipx install secure-ai-pipeline` once it's on PyPI)
 ```
 
-Once connected, Claude Code can call `check_package`, `sast_scan`, `sca_scan`, and
-`full_scan` directly. Ask it to "check that package exists before importing" or
-"scan this file for security issues" and it will use these tools.
+## Connect (Claude Code · Codex · Cursor)
 
-Verify the tools registered:
+- **Claude Code** — `claude mcp add secure-ai-pipeline -- sap-mcp` (then `claude mcp list`)
+- **Codex CLI** — add to `~/.codex/config.toml`:
+  ```toml
+  [mcp_servers.secure-ai-pipeline]
+  command = "sap-mcp"
+  ```
+- **Cursor / Windsurf / Cline** — add to the MCP config:
+  ```json
+  { "mcpServers": { "secure-ai-pipeline": { "command": "sap-mcp" } } }
+  ```
 
-```bash
-claude mcp list
-```
+Ask the assistant to *"check that package exists before importing it"* or *"scan this
+code for security issues"* and it will call these tools. The four snippet tools work
+from any install; `scan_repo` runs the full multi-tool scan when the pipeline is present
+(this repo, or a project where `npx secure-ai-pipeline init` dropped it in).
 
 ## REST server (for the OpenAI GPT Action)
 
 ```bash
+pip install 'secure-ai-pipeline[rest]'          # adds fastapi + uvicorn
 uvicorn extensions.claude_mcp.server:app --port 8765
 # health check:
 curl http://127.0.0.1:8765/health

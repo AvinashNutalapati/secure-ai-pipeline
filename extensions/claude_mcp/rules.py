@@ -1,26 +1,20 @@
 """
 Shared rule engine for the Secure AI Pipeline MCP + REST servers.
 
-The SAST rules and CVE data are DERIVED from the one canonical source under
-scripts/scanners/ (the same data the CI pipeline, npx scan and the Action use),
-so the MCP tools never drift from the rest of the product. Run from the repo
-root; we add scripts/ to the import path so ``scanners.*`` resolves.
+The SAST rules and CVE data come from ``_rules_data.py`` — a bundled, in-package
+copy that ``scripts/gen_rules.py`` regenerates from the ONE canonical source
+(scripts/scanners/sast/ai_insecure_defaults.py + scanners/sca/known_cves.py). So
+the MCP tools never drift from the rest of the product AND the server works when
+the wheel is pip-installed, with no dependency on the scripts/ tree.
 """
 
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import dataclass, asdict
-from pathlib import Path
 from typing import Optional
 
-_SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if _SCRIPTS.is_dir() and str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-
-from scanners.sast.ai_insecure_defaults import RULES as _CANON_SAST  # noqa: E402
-from scanners.sca.known_cves import KNOWN_CVES  # noqa: E402  (inherited canonical CVEs)
+from ._rules_data import RULES as _CANON_SAST, KNOWN_CVES
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SAST rules (mirror of run_pipeline.SAST_REGEX_RULES + a remediation hint)

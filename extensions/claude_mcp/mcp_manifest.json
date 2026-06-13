@@ -4,9 +4,10 @@
   "description": "Security scanner for AI-generated code",
   "homepage": "https://mirawyn.com",
   "tools": [
-    { "name": "check_package", "description": "Verify a package exists on PyPI or npm before importing it" },
-    { "name": "sast_scan", "description": "Scan a code snippet for insecure patterns (injection, hardcoded secrets, etc.)" },
-    { "name": "sca_scan", "description": "Check dependency versions for known CVEs" },
-    { "name": "full_scan", "description": "Run all security checks on code + requirements" }
+    { "name": "check_package", "description": "Verify a package exists on PyPI or npm before importing/installing it (anti-slopsquatting)" },
+    { "name": "sast_scan", "description": "Scan a code snippet for insecure patterns (injection, hardcoded secrets, insecure defaults)" },
+    { "name": "sca_scan", "description": "Check pinned dependency versions (requirements.txt) for known CVEs" },
+    { "name": "full_scan", "description": "Run package, SAST and SCA checks together and return one blocking decision" },
+    { "name": "scan_repo", "description": "Full multi-tool security scan on a project directory (needs the pipeline; degrades on a bare install)" }
   ]
 }

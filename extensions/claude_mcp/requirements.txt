@@ -1,8 +1,12 @@
-# Claude Code MCP server (stdio) — mcp_server.py
-mcp>=1.2
+# Dev / REST-deploy dependencies. To run just the MCP server (sap-mcp) for
+# Claude Code / Codex / Cursor you do NOT need this file — `pipx install
+# secure-ai-pipeline` pulls only the two core deps below.
 
-# OpenAI GPT Action backend (REST) — server.py
+# Core — stdio MCP server (mcp_server.py)
+mcp>=1.2          # the Model Context Protocol SDK
+requests>=2.31    # PyPI / npm package-existence checks (anti-slopsquatting)
+
+# REST server (server.py, the OpenAI GPT Action) — `pip install secure-ai-pipeline[rest]`
 fastapi>=0.110
 uvicorn>=0.29
-requests>=2.31
 pydantic>=2.0

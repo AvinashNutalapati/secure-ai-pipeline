@@ -9,9 +9,20 @@ def test_rules_derived_from_canonical_catalog():
     from scanners.sast.ai_insecure_defaults import RULES as canon_sast
     from scanners.sca.known_cves import KNOWN_CVES as canon_cves
     # Every canonical SAST rule (incl. hardcoded-api-key via its JS trigger) is
-    # present, and the CVE table IS the canonical object — so they can't drift.
+    # present, and the CVE table matches the canonical — so they can't drift.
     assert {r.rule_id for r in rules.SAST_RULES} == {r["id"] for r in canon_sast}
     assert rules.KNOWN_CVES == canon_cves
+
+
+def test_bundled_rules_data_matches_canonical():
+    # The MCP/REST servers read from the bundled _rules_data.py (so they work
+    # pip-installed, with no scripts/). It must equal the canonical source;
+    # gen_rules.py --check (test_rule_parity) keeps it from going stale.
+    from extensions.claude_mcp import _rules_data
+    from scanners.sast.ai_insecure_defaults import RULES as canon_sast
+    from scanners.sca.known_cves import KNOWN_CVES as canon_cves
+    assert _rules_data.RULES == canon_sast
+    assert _rules_data.KNOWN_CVES == canon_cves
 
 
 # ── full_scan package semantics ──────────────────────────────────────────────

@@ -14,12 +14,13 @@ Run from the repo root so the ``extensions.claude_mcp`` package resolves.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
-from . import rules  # also bootstraps scripts/ onto sys.path (for scan_repo)
+from . import rules
 from .registry import check_package as _check_package
 
 mcp = FastMCP("secure-ai-pipeline")
@@ -65,18 +66,42 @@ def full_scan(
 
 
 @mcp.tool()
-def scan_repo(path: str = ".", deep: bool = False) -> dict:
+def scan_repo(path: str, deep: bool = False) -> dict:
     """Run the FULL multi-tool security scan on a directory — every installed OSS
     scanner (secrets, supply-chain/slopsquatting, SCA, SAST, IaC, CI/CD),
     consolidated per type — the same registry-driven engine the GitHub Action uses.
 
-    Whatever scanners are on PATH run automatically; nothing extra to wire. `deep`
-    also runs the heaviest tools (e.g. GuardDog deep package analysis). Returns one
-    entry per scan type with the engines that ran and their findings.
-    """
-    import scan_all  # lazy: pulls in the whole pipeline only when actually scanning
+    `path` is the absolute path to the project to scan (the MCP client controls the
+    server's working directory, so pass it explicitly). `deep` also runs the
+    heaviest tools (e.g. GuardDog). Whatever scanners are on PATH run automatically.
 
-    result = scan_all.orchestrate(Path(path).resolve(), offline=False, only=[], deep=deep)
+    This needs the full pipeline: it works from the secure-ai-pipeline repo or a
+    project where `npx secure-ai-pipeline init` has dropped it in. On a bare
+    pip-install it returns a hint — use the standalone snippet tools instead
+    (sast_scan / sca_scan / check_package), which always work.
+    """
+    target = Path(path).expanduser().resolve()
+    if not target.is_dir():
+        return {"available": True, "error": f"Not a directory: {path}"}
+
+    # The full scan needs scripts/ (the pipeline). Look for it next to this package
+    # (repo / dev install) and inside the scanned project (npx-init'd); add the
+    # first that exists, then import. Absent in a bare pip-install → degrade.
+    for candidate in (Path(__file__).resolve().parents[2] / "scripts", target / "scripts"):
+        if candidate.is_dir() and str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
+    try:
+        import scan_all
+    except ImportError:
+        return {
+            "available": False,
+            "message": ("Full-repo scanning needs the secure-ai-pipeline tooling, which "
+                        "isn't present here. Run `npx secure-ai-pipeline init` in the "
+                        "project (then `npx secure-ai-pipeline scan`), or use the snippet "
+                        "tools (sast_scan, sca_scan, check_package) which work standalone."),
+        }
+
+    result = scan_all.orchestrate(target, offline=False, only=[], deep=deep)
     return {
         "root": result["root"],
         "layers": {t: {"engine": lyr.engine, "note": lyr.note,
