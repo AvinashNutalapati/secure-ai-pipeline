@@ -5,6 +5,7 @@
   "homepage": "https://mirawyn.com",
   "tools": [
     { "name": "check_package", "description": "Verify a package exists on PyPI or npm before importing/installing it (anti-slopsquatting)" },
+    { "name": "verify_install", "description": "Check every package in an install command (pip/npm/yarn/pnpm/uv) before running it" },
     { "name": "sast_scan", "description": "Scan a code snippet for insecure patterns (injection, hardcoded secrets, insecure defaults)" },
     { "name": "sca_scan", "description": "Check pinned dependency versions (requirements.txt) for known CVEs" },
     { "name": "full_scan", "description": "Run package, SAST and SCA checks together and return one blocking decision" },

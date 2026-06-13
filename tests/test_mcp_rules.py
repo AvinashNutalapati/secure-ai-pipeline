@@ -89,6 +89,26 @@ def test_requirements_parser_accepts_dotted_names():
     ]
 
 
+def test_parse_install_command():
+    p = rules.parse_install_command
+    # pip: strip versions/extras, skip -r files, flags, local paths, git refs
+    assert p("pip install requests flask==2.0 numpy[extra]") == [
+        ("requests", "pypi"), ("flask", "pypi"), ("numpy", "pypi")]
+    assert p("pip install -r req.txt -U requests ./local git+https://x") == [("requests", "pypi")]
+    assert p("python -m pip install httpx") == [("httpx", "pypi")]
+    assert p("uv add httpx") == [("httpx", "pypi")]
+    # npm: keep @scope/pkg, strip @version, handle i/add
+    assert p("npm install express @scope/pkg lodash@4") == [
+        ("express", "npm"), ("@scope/pkg", "npm"), ("lodash", "npm")]
+    assert p("yarn add react") == [("react", "npm")]
+    assert p("pnpm i left-pad") == [("left-pad", "npm")]
+    # not an install command, or nothing to verify
+    assert p("git clone https://x") == []
+    assert p("echo hi") == []
+    assert p("npm install") == []
+    assert p("uv run pytest") == []
+
+
 def test_sast_catches_uppercase_secret_names():
     # Regression: a leading \b in the trigger used to miss UPPER_SNAKE secret
     # names (OPENAI_API_KEY, DB_PASSWORD, AWS_SECRET) — the most common shape.

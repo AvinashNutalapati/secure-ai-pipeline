@@ -117,6 +117,70 @@ def parse_requirements(requirements: str) -> list[tuple[str, str]]:
     return result
 
 
+def _npm_base(spec: str) -> str:
+    """'@scope/pkg/sub' -> '@scope/pkg'; 'pkg/sub' -> 'pkg'."""
+    if spec.startswith("@"):
+        return "/".join(spec.split("/")[:2])
+    return spec.split("/")[0]
+
+
+_VERSION_SPLIT = re.compile(r"[<>=!~;@\[ ]")        # strip version/extras specifiers
+_NPM_VERSION_SPLIT = re.compile(r"(?<!^)(?<![@/])@")  # npm: split version @, keep @scope
+
+
+def parse_install_command(command: str):
+    """Parse a dependency-install command into (package, registry) pairs so each can
+    be verified before it runs. Handles pip / pip3 / `python -m pip` / `uv pip` /
+    `uv add`, and npm / pnpm / yarn (install | i | add). Skips flags, -r/-c/-e
+    arguments, local paths, URLs/git refs, and archives, and strips version
+    specifiers. Returns [] for anything that isn't an install command."""
+    import shlex
+    try:
+        toks = shlex.split(command, comments=True)
+    except ValueError:
+        toks = command.split()
+    if not toks:
+        return []
+    low = [t.lower() for t in toks]
+
+    if any(t in ("pip", "pip3", "uv") or t.endswith(("/pip", "/pip3")) for t in low):
+        registry, verbs = "pypi", {"install", "add"}
+    elif any(t in ("npm", "pnpm", "yarn") for t in low):
+        registry, verbs = "npm", {"install", "i", "add"}
+    else:
+        return []
+
+    try:
+        start = next(i for i, t in enumerate(low) if t in verbs) + 1
+    except StopIteration:
+        return []
+
+    out, seen, skip_next = [], set(), False
+    for tok in toks[start:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok.startswith("-"):
+            if tok in ("-r", "--requirement", "-c", "--constraint", "-e", "--editable"):
+                skip_next = True          # the next token is a file/path, not a package
+            continue
+        if ("://" in tok or tok.startswith(("git+", ".", "/"))
+                or tok.endswith((".txt", ".whl", ".tar.gz", ".tgz", ".zip"))):
+            continue                       # path / url / git ref / archive
+        if registry == "npm":
+            name = _npm_base(_NPM_VERSION_SPLIT.split(tok, 1)[0])
+            if name.startswith("@") and "/" not in name:
+                continue                   # bare @scope is not a package
+        else:
+            name = _VERSION_SPLIT.split(tok, 1)[0].strip()
+            if "/" in name:                # pip: a slash means a path, not a PyPI name
+                continue
+        if name and name not in seen:
+            seen.add(name)
+            out.append((name, registry))
+    return out
+
+
 def sca_scan(requirements: str) -> list[ScaFinding]:
     findings: list[ScaFinding] = []
     for pkg, ver in parse_requirements(requirements):

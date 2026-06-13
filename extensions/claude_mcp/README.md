@@ -18,13 +18,21 @@ registry check (`registry.py`):
 
 ## Tools
 
-| Tool | Input | Output |
+Every tool leads with a **`verdict`** (`"block"` | `"warn"` | `"ok"`) and a one-line
+**`summary`** so the assistant can act without parsing the details. All tools are
+read-only and annotated (`readOnlyHint`) so MCP clients can auto-approve them.
+
+| Tool | Input | Output (beyond `verdict` + `summary`) |
 |------|-------|--------|
 | `check_package` | `{ package, registry: "pypi"\|"npm" }` | `{ exists, latest_version, warning }` |
+| `verify_install` | `{ command }` | `{ packages: [...] }` — checks every package in a `pip/npm/yarn/pnpm/uv` install command |
 | `sast_scan` | `{ code, language }` | `{ findings: [{ rule, line, severity, message, fix }] }` |
 | `sca_scan` | `{ requirements }` | `{ vulnerabilities: [{ package, version, cve, severity, fix_version }] }` |
-| `full_scan` | `{ code, requirements, language }` | `{ findings, blocked, summary }` |
+| `full_scan` | `{ code, requirements, language }` | `{ findings, blocked }` |
 | `scan_repo` | `{ path, deep }` | `{ root, layers }` — full multi-tool scan (needs the pipeline) |
+
+There's also a **`secure_review` prompt** that tells the assistant to verify new
+deps + scan generated code before finalizing — turns "has tools" into "uses them."
 
 `exists` is **tri-state**: `true` (found), `false` (confirmed missing — a
 slopsquatting risk, do not install), or `null` (registry unreachable — could not
