@@ -1,11 +1,12 @@
 # Secure AI Pipeline
 
 > **Ship AI-written code without shipping its mistakes.**
-> A free, open-source security layer for developers who build with Cursor, Copilot,
-> Claude Code, and MCP. One command tells you how exposed your AI workflow is —
-> and the same toolkit gates your CI, your editor, and your AI assistant.
+> Cursor, Copilot, and Claude Code write code fast — and quietly widen your attack
+> surface: invented package names, inlined secrets, over-permissioned agents,
+> insecure defaults. This is the free, open-source security layer that catches all
+> of it — in your terminal, your editor, your CI, and inside the AI assistant itself.
 >
-> 🌐 [mirawyn.com](https://mirawyn.com) · 100% free · MIT licensed · your code never leaves your machine
+> 🌐 [mirawyn.com](https://mirawyn.com) · 100% free · MIT licensed · **your code never leaves your machine**
 
 [![CI](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/ci.yml)
 [![Security Pipeline](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/security.yml/badge.svg)](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/security.yml)
@@ -14,11 +15,91 @@
 [![Use this template](https://img.shields.io/badge/Use%20this-template-2ea44f?logo=github)](https://github.com/AvinashNutalapati/secure-ai-pipeline/generate)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 
-## Use it in GitHub Actions — recommended, zero install
+---
 
-The simplest way to run it: add one workflow file. GitHub's runner installs the
-scanners (Gitleaks, Semgrep, Trivy, OSV-Scanner) on every run, so **you install
-nothing**, and **your code never leaves your own GitHub repo** — we never see it.
+## See it work — 30 seconds, nothing to configure
+
+```bash
+npx secure-ai-pipeline@latest scan .
+```
+
+One command. No account, no upload, no telemetry. It runs every security layer it
+can and prints a compact verdict per layer:
+
+```text
+  Secure AI Pipeline — full scan
+
+  ▍ SECRETS                          · gitleaks
+      1 critical
+      CRITICAL      Secret detected: AWS access key id
+
+  ▍ DEPENDENCIES (SCA + malicious packages)   · trivy + osv-scanner
+      1 critical  3 high
+      CRITICAL      MALICIOUS PACKAGE: evil-pkg 1.0.0 — MAL-2024-0001
+      HIGH     ×3   Vulnerable dependency: lodash 4.17.0 — CVE-…
+
+  ▍ STATIC ANALYSIS (SAST)           · semgrep
+      2 high
+      HIGH          SQL query built from an f-string
+
+  ▍ AI WORKFLOW BLAST RADIUS         · built-in
+      1 critical  5 high
+      CRITICAL      Workflow uses pull_request_target
+      …
+
+  ▍ DYNAMIC ANALYSIS (DAST)          · not run
+      pass --dast-url <url> (or answer the prompt) to scan a running app
+```
+
+Want to watch it light up? Point it at the deliberately-insecure demo repo:
+
+```bash
+git clone https://github.com/AvinashNutalapati/secure-ai-pipeline-demo
+npx secure-ai-pipeline scan secure-ai-pipeline-demo --html report.html
+```
+
+---
+
+## Why this exists
+
+AI assistants don't just write the occasional insecure line. They reshape **how you
+develop** — and every new convenience is a new way in:
+
+- **🎣 Slopsquatting — the one nobody else catches.** Models confidently invent
+  package names that don't exist. Attackers pre-register those exact names on
+  PyPI/npm, and your next `pip install` runs their malware. The built-in
+  **anti-slopsquatting guard** verifies every import against the live registry
+  before it can land. *No other drop-in pipeline does this.*
+- **🤖 Over-permissioned agents.** A bare `"Bash"` in `.claude/settings.json`, an
+  MCP server holding your `GITHUB_TOKEN`, a `.cursorrules` that says "run without
+  asking" — each one turns a single prompt injection into real damage.
+- **🩹 Classic AI code smells.** `debug=True`, `verify=False`, f-string SQL,
+  hardcoded keys, `shell=True` — generated faster than anyone reviews them.
+
+Most AppSec tools scan code *after* it lands. This one owns the **seam** between the
+assistant, your laptop, the repo, your MCP servers, and CI — the place AI risk
+actually lives.
+
+---
+
+## Pick your door — one engine, six ways in
+
+| You want… | Do this | You get |
+|---|---|---|
+| **A 5-minute checkup** | `npx secure-ai-pipeline scan .` | Findings + Blast Radius Score + fix prompts, in your terminal |
+| **One line in CI** ⭐ | [GitHub Action](#-github-action--recommended-zero-install) | The full pipeline as a single `uses:` step — zero local install |
+| **CI for an existing repo** | `npx secure-ai-pipeline init` | Workflow, scanners, SAST rules, pre-commit hooks — copied in, idempotent, never overwrites your files |
+| **CI for a new repo** | [Use this template](https://github.com/AvinashNutalapati/secure-ai-pipeline/generate) | A repo born with the pipeline wired and a setup checklist issue |
+| **Findings while you type** | [VS Code / Cursor extension](#-vs-code--cursor) | Inline squiggles + one-click quick fixes + a Blast Radius command |
+| **Your AI checks itself** | [MCP server](#-claude-code--codex--cursor-mcp) / [Custom GPT](#-openai-custom-gpt) | The assistant verifies packages & scans code mid-conversation |
+
+---
+
+## ⭐ GitHub Action — recommended, zero install
+
+The simplest path: add one workflow file. GitHub's runner installs the scanners on
+every run, so **you install nothing** and **your code never leaves your own GitHub
+repo** — we never see it.
 
 Add `.github/workflows/security.yml`:
 
@@ -50,20 +131,26 @@ jobs:
           # deep-scan: "false"                         # "true" also runs the heaviest scanners (GuardDog) — slower, more thorough
 ```
 
-Push it (or run it from the **Actions** tab) and on every push / PR you get —
-**with nothing installed locally** — a whole stack of OSS scanners run in parallel
-and **consolidated per scan type**: Secrets (Gitleaks · TruffleHog · detect-secrets),
-SAST (Semgrep · Bandit · gosec · Brakeman + AI-specific rules), Dependencies (Trivy ·
-OSV · Grype · pip-audit · npm-audit), Dependency Trust (anti-slopsquatting · GuardDog),
-IaC (Checkov · KICS), CI/CD workflows (zizmor · actionlint · Scorecard), and the AI
-workflow blast-radius check. Extra scanners activate automatically when present.
+Push it (or run it from the **Actions** tab) and every push / PR runs a whole stack
+of OSS scanners in parallel, **consolidated per scan type**:
+
+| Layer | Engines (extras activate automatically when present) |
+|---|---|
+| **Secrets** | Gitleaks · TruffleHog · detect-secrets |
+| **SAST** | Semgrep · Bandit · gosec · Brakeman + AI-specific rules |
+| **Dependencies** | Trivy · OSV · Grype · pip-audit · npm-audit |
+| **Dependency trust** | anti-slopsquatting · GuardDog |
+| **IaC** | Checkov · KICS |
+| **CI/CD workflows** | zizmor · actionlint · Scorecard |
+| **AI workflow** | the Blast Radius check (built-in) |
+
 Results land in a **job summary**: one table per scan type (severity, finding,
 location, suggested fix — including the dependency's fixed version) plus
 **copy-paste AI fix prompts** per type and one combined prompt.
 
-**Defaults are report-first so the first run isn't a wall of red:** leaked secrets
-and hallucinated/malicious packages **always block**; CVEs and SAST warnings are
-**reported, not blocking**, until you set `fail-on-warnings: "true"`.
+> **Defaults are report-first, so the first run isn't a wall of red:** leaked
+> secrets and hallucinated/malicious packages **always block**; CVEs and SAST
+> warnings are **reported, not blocking**, until you set `fail-on-warnings: "true"`.
 
 > **Two lines that matter:** `fetch-depth: 0` lets Gitleaks scan your full history
 > (a shallow clone only sees HEAD), and the `GITHUB_TOKEN` env line is required
@@ -74,44 +161,15 @@ and hallucinated/malicious packages **always block**; CVEs and SAST warnings are
 > still appear in the **Actions log** and the **job summary**.
 >
 > **Pin for production:** `@v3` tracks the latest fix; pin to a tag/SHA (e.g.
-> `@v3.2.1`) to lock the version.
+> `@v3.2.2`) to lock the version.
 
-## Use it locally — one command
+---
 
-```bash
-npx secure-ai-pipeline@latest scan .
-```
+## Use it locally
 
-Runs locally (no account, no upload, no telemetry) and prints one compact table per
-scan layer — **Secrets, Dependencies (SCA + malicious packages), SAST, AI workflow
-blast radius**, and optional DAST:
-
-```text
-  Secure AI Pipeline — full scan
-
-  ▍ SECRETS                          · gitleaks
-      1 critical
-      CRITICAL      Secret detected: AWS access key id
-
-  ▍ DEPENDENCIES (SCA + malicious packages)   · trivy + osv-scanner
-      1 critical  3 high
-      CRITICAL      MALICIOUS PACKAGE: evil-pkg 1.0.0 — MAL-2024-0001
-      HIGH     ×3   Vulnerable dependency: lodash 4.17.0 — CVE-…
-
-  ▍ STATIC ANALYSIS (SAST)           · semgrep
-      2 high
-      HIGH          SQL query built from an f-string
-
-  ▍ AI WORKFLOW BLAST RADIUS         · built-in
-      1 critical  5 high
-      CRITICAL      Workflow uses pull_request_target
-      …
-
-  ▍ DYNAMIC ANALYSIS (DAST)          · not run
-      pass --dast-url <url> (or answer the prompt) to scan a running app
-```
-
-Initial output stays compact (**severity + title only**). Drill in, export, gate:
+`npx secure-ai-pipeline scan .` (above) runs locally with no account, no upload, no
+telemetry. Output stays compact (**severity + title only**) — drill in, export, and
+gate from there:
 
 ```bash
 npx secure-ai-pipeline scan . --detail sast                       # expand one layer
@@ -136,50 +194,21 @@ pipx install semgrep                      # full SAST (JS/TS + community rules)
 > `MAL-` advisories). Socket.dev needs a paid account/API key, so it's an opt-in
 > add-on (`SOCKET_API_KEY` + `npm i -g @socketsecurity/cli`), not the default.
 
-Watch it light up against the deliberately-insecure demo repo:
+---
 
-```bash
-git clone https://github.com/AvinashNutalapati/secure-ai-pipeline-demo
-npx secure-ai-pipeline scan secure-ai-pipeline-demo --html report.html
-```
+## 🧩 VS Code / Cursor
 
-## The problem this solves
+Inline diagnostics as you write — no CI wait. Squiggles on insecure patterns,
+one-click quick fixes, and a **Blast Radius** command for the whole workspace.
 
-AI assistants don't just write the occasional insecure line — they widen the
-**attack surface around how you develop**:
+[**Install from the Marketplace →**](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline)
 
-- **Slopsquatting.** Models invent plausible package names that don't exist.
-  Attackers pre-register them on PyPI/npm; your next `pip install` runs malware.
-  The anti-slopsquatting guard verifies every import against the live registry —
-  no other drop-in pipeline does this.
-- **Over-permissioned agents.** A bare `"Bash"` in `.claude/settings.json`, an MCP
-  server holding your `GITHUB_TOKEN`, a `.cursorrules` file that says "run without
-  asking" — each one turns a prompt injection into real damage.
-- **Classic AI code smells.** `debug=True`, `verify=False`, f-string SQL,
-  hardcoded keys, `shell=True` — generated faster than anyone reviews them.
+---
 
-Most AppSec tools scan code *after* it lands. This project owns the **seam**
-between the assistant, your laptop, the repo, MCP servers, and CI.
+## 🔌 Claude Code · Codex · Cursor (MCP)
 
-## Pick how you want it — six doors, one engine
-
-| You want… | Do this | You get |
-|---|---|---|
-| **A 5-minute checkup** | `npx secure-ai-pipeline scan .` | Blast Radius Score + fixes, in your terminal |
-| **CI for an existing repo** | `npx secure-ai-pipeline init` | Workflow, scanners, SAST rules, pre-commit hooks — copied in, idempotent, never overwrites your files |
-| **CI for a new repo** | [Use this template](https://github.com/AvinashNutalapati/secure-ai-pipeline/generate) | A repo born with the pipeline wired and a setup checklist issue |
-| **One line in your workflow** | [GitHub Action](#use-it-in-github-actions--recommended-zero-install) (top of README) | Full pipeline as a single `uses:` step |
-| **Findings while you type** | [VS Code / Cursor extension](https://marketplace.visualstudio.com/items?itemName=AvinashNutalapati1.secure-ai-pipeline) | Inline squiggles + one-click quick fixes, plus a Blast Radius command |
-| **Your AI checks itself** | Claude MCP server / Custom GPT (below) | The assistant verifies packages and scans code mid-conversation |
-
-### GitHub Action
-
-The recommended path — full workflow and options are at the top of this README,
-[Use it in GitHub Actions](#use-it-in-github-actions--recommended-zero-install).
-
-### Claude Code · Codex · Cursor (MCP)
-
-One install gives you the `sap-mcp` command, then point your assistant at it:
+Let the assistant check *itself*. One install gives you the `sap-mcp` command, then
+point your tool at it:
 
 ```bash
 pipx install git+https://github.com/AvinashNutalapati/secure-ai-pipeline.git
@@ -198,21 +227,25 @@ sap-mcp --selftest          # verify it works before wiring it up
 
 Your assistant can now call `check_package`, `verify_install`, `sast_scan`,
 `sca_scan`, `full_scan`, and `scan_repo` mid-session — ask it to *"verify that
-package exists before importing it"* or *"scan this code before you give it to
-me."* Every tool returns a **verdict** (block / warn / ok). The snippet tools work
-standalone; `scan_repo` runs the full multi-tool scan when the pipeline is
-present. ([details](extensions/claude_mcp/README.md))
+package exists before importing it"* or *"scan this code before you give it to me."*
+Every tool returns a **verdict** (block / warn / ok). The snippet tools work
+standalone; `scan_repo` runs the full multi-tool scan when the pipeline is present.
+([details](extensions/claude_mcp/README.md))
 
-### OpenAI Custom GPT
+---
+
+## 🤝 OpenAI Custom GPT
 
 The scanner API runs at **https://api.mirawyn.com**. Create a GPT, paste
 [`openapi.yaml`](extensions/openai-gpt/openapi.yaml) as an Action and
 [`GPT_INSTRUCTIONS.md`](extensions/openai-gpt/GPT_INSTRUCTIONS.md) as its
 instructions — done. (Self-hosting: [DEPLOY.md](extensions/openai-gpt/DEPLOY.md).)
 
+---
+
 ## What it catches
 
-**Your AI workflow** (the Blast Radius checkup — `scan`, the Action, and the editor):
+**Your AI workflow** — the Blast Radius checkup (`scan`, the Action, and the editor):
 
 | Surface | Examples |
 |---|---|
@@ -224,7 +257,7 @@ instructions — done. (Self-hosting: [DEPLOY.md](extensions/openai-gpt/DEPLOY.m
 | Config secrets | hardcoded tokens in `.env`, `mcp.json`, Claude configs (GitHub, OpenAI, Anthropic, AWS, Slack, Stripe key shapes) |
 | Dependency trust | hallucinated/slopsquatted imports verified against live PyPI & npm |
 
-**Your AI-written code** (the CI pipeline — Stage 0 blocks before Stage 1 runs):
+**Your AI-written code** — the CI pipeline (Stage 0 blocks before Stage 1 runs):
 
 | Flaw | Caught by | Action |
 |---|---|---|
@@ -240,41 +273,47 @@ instructions — done. (Self-hosting: [DEPLOY.md](extensions/openai-gpt/DEPLOY.m
 | Known-CVE pinned dependency | Trivy SCA | Block |
 | Live-site issues (XSS headers, cookies…) | ZAP baseline (needs `STAGING_URL`) | Report only |
 
-## Gate it your way
+---
+
+## Make it a gate
 
 Drop a [`secure-ai-pipeline.yml`](examples/secure-ai-pipeline.example.yml) at your
 repo root to turn the checkup into a build gate:
 
 ```yaml
-fail_on: [critical, high]   # threshold — listing high also gates critical
+fail_on: [critical, high]       # threshold — listing high also gates critical
 ignore: [gha-unpinned-action]   # rule IDs to suppress (say why!)
 exclude: ["examples/**"]        # paths whose findings are dropped
 mcp:
   allowed_servers: [github-readonly]   # anything else gets flagged
 ```
 
-No policy file? `scan` stays report-only and friendly. There's also
-`--fail-on high` for one-off CI gating, `--offline` to skip network checks,
-`--exclude 'data/**,test/**'` to silence fixture/vendor dirs, and inline
-`# nosemgrep` / `# nosec` comments to suppress a confirmed-safe line in place.
-In CI, the same is the `fail-on-warnings` input on the Action (above).
+No policy file? `scan` stays report-only and friendly. You also get `--fail-on high`
+for one-off CI gating, `--offline` to skip network checks, `--exclude
+'data/**,test/**'` to silence fixture/vendor dirs, and inline `# nosemgrep` /
+`# nosec` comments to suppress a confirmed-safe line in place. In CI, the same is the
+`fail-on-warnings` input on the Action (above).
+
+---
 
 ## Privacy & trust
 
-- **Local-first:** `scan`, the editor extension, and the pre-commit hooks never
-  upload your code. The built-in scanners' only network calls are existence
-  checks of package *names* against PyPI/npm (skippable with `--offline`). The
-  optional OSS engines run locally too; trivy/osv-scanner fetch their own
-  vulnerability databases, which you can pre-cache for air-gapped use.
-- **Fail-closed where it counts:** missing scanner output fails the gate; a
-  pending (`underReview`) suppression doesn't sneak findings through; registry
-  outages warn instead of inventing verdicts.
-- **No accounts, no tiers, no telemetry.** MIT licensed. If it saves you once,
-  it has paid for itself forever.
+- **Local-first.** `scan`, the editor extension, and the pre-commit hooks never
+  upload your code. The built-in scanners' only network calls are existence checks
+  of package *names* against PyPI/npm (skippable with `--offline`). The optional OSS
+  engines run locally too; trivy/osv-scanner fetch their own vulnerability
+  databases, which you can pre-cache for air-gapped use.
+- **Fail-closed where it counts.** Missing scanner output fails the gate; a pending
+  (`underReview`) suppression doesn't sneak findings through; registry outages warn
+  instead of inventing verdicts.
+- **No accounts, no tiers, no telemetry.** MIT licensed. If it saves you once, it
+  has paid for itself forever.
 
 Docs: [threat model](docs/threat-model.md) · [AI tool risk](docs/ai-tool-risk.md) ·
 [MCP hardening](docs/mcp-hardening.md) · [privacy](docs/privacy.md) ·
 [domain setup](docs/domain-setup.md)
+
+---
 
 ## Contributing
 
