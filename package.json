@@ -15,10 +15,15 @@
     "action.yml",
     ".github/workflows/security.yml",
     "examples/",
-    "docs/"
+    "docs/ai-tool-risk.md",
+    "docs/domain-setup.md",
+    "docs/mcp-hardening.md",
+    "docs/privacy.md",
+    "docs/threat-model.md"
   ],
   "scripts": {
-    "test": "node cli/init.js --help"
+    "test": "node cli/init.js --help",
+    "prepublishOnly": "node cli/init.js --help"
   },
   "keywords": [
     "security",

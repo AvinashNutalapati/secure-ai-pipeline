@@ -24,7 +24,7 @@ DevSecOps template catches AI-invented package names, and this one does.
 - uses: actions/checkout@v4
   with:
     fetch-depth: 0                              # full history for the secrets scan
-- uses: AvinashNutalapati/secure-ai-pipeline@v2
+- uses: AvinashNutalapati/secure-ai-pipeline@v3
   env:
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # composite actions can't read secrets
 ```

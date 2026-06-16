@@ -65,7 +65,7 @@ runs:
         # scanned) — see the README quickstart:
         #   - uses: actions/checkout@v4
         #     with: { fetch-depth: 0 }
-        #   - uses: AvinashNutalapati/secure-ai-pipeline@v2
+        #   - uses: AvinashNutalapati/secure-ai-pipeline@v3
         #     env:  { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
         GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
         # We render the secrets result in our own unified summary, so suppress
