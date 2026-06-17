@@ -94,3 +94,89 @@ rules:
       category: security
       cwe: 'CWE-94: Code Injection'
       ai-generated-pattern: true
+
+  - id: llm-output-to-sink
+    pattern-either:
+      - pattern: 'eval(<... $X.choices[0].message.content ...>)'
+      - pattern: 'exec(<... $X.choices[0].message.content ...>)'
+      - pattern: 'eval(<... $X.output_text ...>)'
+      - pattern: 'exec(<... $X.output_text ...>)'
+      - pattern: 'os.system(<... $X.choices[0].message.content ...>)'
+      - pattern: 'subprocess.$F(<... $X.choices[0].message.content ...>, ...)'
+    message: >
+      LLM output flows into a code/command execution sink (eval/exec/shell) — model output is untrusted; never execute it.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: 'CWE-94: Improper Control of Generation of Code'
+      ai-generated-pattern: true
+
+  - id: jwt-verify-disabled
+    pattern-either:
+      - pattern: 'jwt.decode(..., verify=False, ...)'
+      - pattern: 'jwt.decode(..., options={..., "verify_signature": False}, ...)'
+    message: >
+      JWT signature verification disabled — tokens can be forged. Verify the signature and pin the algorithm (never 'none').
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: 'CWE-347: Improper Verification of Cryptographic Signature'
+      ai-generated-pattern: true
+
+  - id: weak-hash
+    pattern-either:
+      - pattern: 'hashlib.md5(...)'
+      - pattern: 'hashlib.sha1(...)'
+    message: >
+      MD5/SHA-1 are broken for security use (collisions). Use SHA-256+ for integrity/signatures; only keep MD5/SHA-1 for non-security checksums.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: 'CWE-327: Use of a Broken or Risky Cryptographic Algorithm'
+      ai-generated-pattern: true
+
+  - id: insecure-deserialization
+    pattern-either:
+      - pattern: 'pickle.loads(...)'
+      - pattern: 'pickle.load(...)'
+      - pattern: 'yaml.load($DATA)'
+      - pattern: 'yaml.load(..., Loader=yaml.Loader)'
+    message: >
+      Unsafe deserialization (pickle / yaml.load without SafeLoader) executes arbitrary code on untrusted input.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: 'CWE-502: Deserialization of Untrusted Data'
+      ai-generated-pattern: true
+
+  - id: insecure-random-token
+    patterns:
+      - pattern: $X = random.$F(...)
+      - metavariable-regex:
+          metavariable: $X
+          regex: (?i)(token|secret|password|api_?key|otp|nonce|salt|session)
+    message: >
+      The `random` module is not cryptographically secure. Use `secrets` (Python) / crypto.randomBytes (Node) to mint tokens, keys, OTPs, salts.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: 'CWE-330: Use of Insufficiently Random Values'
+      ai-generated-pattern: true
+
+  - id: bind-all-interfaces
+    pattern-either:
+      - pattern: '$APP.run(host=''0.0.0.0'', ...)'
+      - pattern: '$APP.run(''0.0.0.0'', ...)'
+    message: >
+      Binding to 0.0.0.0 exposes the service on every network interface. Bind to 127.0.0.1 unless external exposure is intended.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: 'CWE-605: Multiple Binds to the Same Port / Exposure on All Interfaces'
+      ai-generated-pattern: true

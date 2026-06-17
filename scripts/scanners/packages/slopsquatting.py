@@ -95,6 +95,54 @@ def _skip(path: Path) -> bool:
     return any(part in SKIP_DIRS for part in path.parts)
 
 
+# ── Typosquat near-miss (Damerau-Levenshtein) ───────────────────────────────
+
+def _dl_distance(a: str, b: str, *, max_d: int = 2) -> int:
+    """Damerau-Levenshtein edit distance (incl. adjacent transposition), capped:
+    returns max_d+1 once it's clearly over the cap (cheap early-out on length)."""
+    if a == b:
+        return 0
+    if abs(len(a) - len(b)) > max_d:
+        return max_d + 1
+    la, lb = len(a), len(b)
+    prev2 = list(range(lb + 1))
+    prev = None
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        best = cur[0]
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev2[j] + 1, cur[j - 1] + 1, prev2[j - 1] + cost)
+            if (i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]):
+                cur[j] = min(cur[j], (prev[j - 2] if prev else prev2[j - 2]) + 1)
+            best = min(best, cur[j])
+        if best > max_d:
+            return max_d + 1
+        prev, prev2 = prev2, cur
+    return prev2[lb]
+
+
+def typosquat_match(name: str, registry: str):
+    """The popular package `name` is a 1-2 edit near-miss of (a classic typosquat
+    shape), or None. `name` must NOT itself be popular. Distance 2 is only allowed
+    for longer names to keep short-name false positives down."""
+    from scanners.packages.popular_packages import popular_for
+    norm = (name or "").lower().replace("-", "_")
+    popular = popular_for(registry)
+    if not norm or norm in popular:
+        return None
+    best, best_d = None, 3
+    for cand in popular:
+        d = _dl_distance(norm, cand, max_d=2)
+        if d < best_d:
+            best, best_d = cand, d
+            if d == 1:
+                break
+    if best_d == 1 or (best_d == 2 and len(norm) >= 6):
+        return best
+    return None
+
+
 def extract_python_imports(path: Path) -> set[str]:
     """Return top-level, non-stdlib package names imported in a Python file.
 
@@ -191,6 +239,59 @@ def discover_first_party(root: Path) -> set[str]:
 # ── Registry existence checks (tri-state, with retry + cache) ───────────────
 # Returns one of: "exists" | "missing" | "error"
 _STATUS_CACHE: dict[tuple[str, str], str] = {}
+# ts (epoch seconds) for disk-loaded cache entries, so TTL actually expires
+# instead of being refreshed every run.
+_CACHE_META: dict[tuple[str, str], float] = {}
+
+# On-disk cache so repeated runs (and CI, if the file is cached) don't re-probe
+# every package name. Only DEFINITIVE verdicts are persisted; "error" never is.
+CACHE_REL = ".secure-ai-pipeline/registry-cache.json"
+_CACHE_TTL = 7 * 24 * 3600  # package existence is stable; 7-day TTL
+
+
+def _cache_path(root) -> Path:
+    return Path(root) / CACHE_REL
+
+
+def load_cache(root) -> None:
+    """Seed the in-memory status cache from disk (best-effort, TTL-filtered)."""
+    try:
+        data = json.loads(_cache_path(root).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return
+    now = time.time()
+    for key, val in (data.get("entries") or {}).items():
+        try:
+            status, ts = val
+            reg, _, name = key.partition(":")
+        except (ValueError, TypeError):
+            continue
+        if status in ("exists", "missing") and reg and name and (now - ts) < _CACHE_TTL:
+            _STATUS_CACHE[(reg, name)] = status
+            _CACHE_META[(reg, name)] = ts
+
+
+def save_cache(root) -> None:
+    """Persist definitive verdicts, preserving original timestamps so TTL works.
+
+    Only writes when the pipeline's `.secure-ai-pipeline/` dir ALREADY exists (i.e.
+    the repo opted into the pipeline). It never creates that dir, so scanning an
+    arbitrary tree (the `posture`/check_packages paths) leaves no surprise files."""
+    cache_dir = Path(root) / ".secure-ai-pipeline"
+    if not cache_dir.is_dir():
+        return
+    now = time.time()
+    entries = {f"{reg}:{name}": [status, _CACHE_META.get((reg, name), now)]
+               for (reg, name), status in _STATUS_CACHE.items()
+               if status in ("exists", "missing")}
+    if not entries:
+        return
+    try:
+        (cache_dir / "registry-cache.json").write_text(
+            json.dumps({"version": 1, "entries": entries}, indent=2,
+                       sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _query(url: str, *, attempts: int = 3, backoff: float = 0.5) -> str:
@@ -246,9 +347,11 @@ def npm_exists(pkg: str) -> bool:
 
 def scan(root: Path) -> dict:
     """Scan a repo tree; return {'blocked': [...], 'warnings': [...], 'ok': [...]}."""
+    load_cache(root)  # reuse prior definitive verdicts (offline-friendly, faster CI)
     first_party = discover_first_party(root)
     blocked: list[dict] = []
     warnings: list[dict] = []
+    suspect: list[dict] = []
     ok: list[str] = []
 
     def record(import_name: str, dist_name: str, status: str, registry: str, where: Path):
@@ -262,6 +365,12 @@ def scan(root: Path) -> dict:
                              "reason": "registry unreachable"})
         else:
             ok.append(dist_name)
+            # It EXISTS but is 1-2 edits from a hugely popular name → likely a
+            # typosquat squatter you actually installed.
+            near = typosquat_match(dist_name, registry)
+            if near:
+                suspect.append({"package": dist_name, "import": import_name,
+                                "registry": registry, "file": rel, "suggestion": near})
 
     # Collect every (import, distribution, registry, file) first, then resolve
     # the unique lookups concurrently — one HTTP probe per unique package
@@ -305,7 +414,9 @@ def scan(root: Path) -> dict:
     for import_name, dist, reg, where in pending:
         record(import_name, dist, statuses[(reg, dist)], reg, where)
 
-    return {"blocked": blocked, "warnings": warnings, "ok": sorted(set(ok))}
+    save_cache(root)  # persist definitive verdicts for the next run
+    return {"blocked": blocked, "warnings": warnings, "suspect": suspect,
+            "ok": sorted(set(ok))}
 
 
 def main(argv=None) -> int:
