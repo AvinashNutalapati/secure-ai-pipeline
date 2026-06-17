@@ -16,6 +16,23 @@ from scanners.registry import ScanContext, ToolAdapter, finding, register, run_j
 
 _INSTALL = "pip install bandit"
 
+# Bandit test_id → CWE number, for the overlaps with our canonical AI-insecure
+# rules + semgrep/gosec, so the same weakness at one line collapses cross-tool.
+# (Only the common security checks; unmapped tests dedup by rule_key instead.)
+_BANDIT_CWE = {
+    "B102": "94", "B307": "95",                       # exec / eval
+    "B201": "94",                                       # flask debug=True
+    "B602": "78", "B603": "78", "B604": "78",          # subprocess shell
+    "B605": "78", "B606": "78", "B607": "78", "B609": "78",
+    "B608": "89",                                       # SQL injection
+    "B303": "327", "B304": "327", "B305": "327", "B324": "327",  # weak crypto
+    "B301": "502", "B302": "502", "B506": "502",        # insecure deserialization
+    "B311": "330",                                       # insecure random
+    "B105": "798", "B106": "798", "B107": "798",        # hardcoded credentials
+    "B104": "605",                                       # bind all interfaces
+    "B501": "295", "B502": "295", "B503": "295",        # TLS verification
+}
+
 
 def parse(data) -> list:
     """`bandit -f json` → {"results": [{filename, line_number, issue_severity,
@@ -31,7 +48,7 @@ def parse(data) -> list:
             f"\nconfidence: {r.get('issue_confidence', '')}  test: {name}",
             r.get("filename", ""), int(r.get("line_number") or 0),
             r.get("more_info", "") or "Apply the secure pattern this Bandit rule describes.",
-            "bandit"))
+            "bandit", rule_key=tid, cwe_id=_BANDIT_CWE.get(tid, "")))
     return out
 
 

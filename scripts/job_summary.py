@@ -120,6 +120,13 @@ def load_packages(path):
                            f"{w.get('registry', '')} ({w.get('reason', 'registry unreachable')})",
                     "rule_obj": {"help": {"text": "Re-run when the registry is reachable."}},
                     "file": w.get("file", ""), "line": 0})
+    for s in data.get("suspect", []):
+        out.append({"level": "warning", "rule": "typosquat-suspect",
+                    "msg": f"Possible typosquat: '{s.get('package', '')}' looks like "
+                           f"the popular '{s.get('suggestion', '')}' ({s.get('registry', '')})",
+                    "rule_obj": {"help": {"text": f"Confirm you meant '{s.get('package', '')}' "
+                                          f"and not '{s.get('suggestion', '')}'."}},
+                    "file": s.get("file", ""), "line": 0})
     out.sort(key=lambda x: _RANK.get(x["level"], 9))
     return out
 
@@ -153,6 +160,9 @@ def load_scan_all(path):
                 "rule_obj": {"help": {"text": fix}},
                 "file": f.get("file", ""), "line": f.get("line") or "",
                 "tool": f.get("tool", ""), "fix": fix,
+                # scan_all has already consolidated cross-tool duplicates; carry the
+                # contributing tools so the summary can show "confirmed by K tools".
+                "sources": f.get("sources") or [],
             })
         rows.sort(key=lambda x: _RANK.get(x["level"], 9))
         out[stype] = rows
@@ -220,25 +230,48 @@ def _dedup(findings, scan_type=""):
     For secrets, the same (file, line) is the same leaked credential regardless of
     how the tool worded it (gitleaks's SARIF vs trufflehog via --scan-all), so we
     dedup on location there; otherwise key on the full (level, msg, file, line) so
-    distinct issues at one line (e.g. two SAST rules) both stay."""
-    seen, out = set(), []
+    distinct issues at one line (e.g. two SAST rules) both stay.
+
+    When a duplicate is dropped its contributing tools are folded into the kept
+    finding's ``sources`` — so the "engines:" line and "✓K" count still credit
+    every tool that found it (e.g. native gitleaks SARIF + the scan_all secrets
+    layer), rather than silently losing the dropped row's attribution."""
+    def _srcs(f):
+        out = [s for s in (f.get("sources") or []) if s]
+        if f.get("tool") and f.get("tool") not in out:
+            out.append(f.get("tool"))
+        return out
+
+    seen, out = {}, []
     for f in findings:
         if scan_type == "secrets" and f.get("file") and f.get("line"):
             key = ("secret", f.get("file"), f.get("line"))
         else:
             key = (f.get("level"), f.get("msg"), f.get("file"), f.get("line"))
         if key in seen:
+            kept = seen[key]
+            merged = list(kept.get("sources") or [])
+            for s in _srcs(f):
+                if s not in merged:
+                    merged.append(s)
+            kept["sources"] = merged
             continue
-        seen.add(key)
+        f = dict(f)
+        f["sources"] = _srcs(f)
+        seen[key] = f
         out.append(f)
     return out
 
 
 def _engines_line(findings):
     """A small line naming every tool that contributed to this section — the
-    visible proof that the type was scanned by the whole stack, consolidated."""
+    visible proof that the type was scanned by the whole stack, consolidated.
+    Counts each finding's merged `sources` (set by consolidation) plus its tool."""
     tools = []
     for f in findings:
+        for t in (f.get("sources") or []):
+            if t and t not in tools:
+                tools.append(t)
         t = f.get("tool")
         if t and t not in tools:
             tools.append(t)
@@ -297,6 +330,9 @@ def build(scans, section_only=False, scan_all=None):
         lines = []
         for f in findings[:100]:
             title, fix = title_and_fix(scan_type, f)
+            k = len(f.get("sources") or [])
+            if k > 1:                       # confirmed by multiple tools → trust signal
+                title = f"{title} ✓{k}"
             loc = f"{f['file']}:{f['line']}" if f.get("file") and f.get("line") else (f.get("file") or "—")
             md.append(f"| {_EMOJI.get(f['level'], '')} {f['level']} | {_esc(title)} "
                       f"| `{_esc(loc)}` | {_esc(fix)} |")

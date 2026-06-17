@@ -31,11 +31,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional
+
+# Per-adapter timeout override, set by the orchestrator on the worker thread that
+# runs a given adapter (thread-local → safe under the parallel ThreadPoolExecutor).
+_TLS = threading.local()
 
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 
@@ -83,8 +89,12 @@ def _default_timeout() -> int:
     """Per-tool wall-clock cap. Bounded so one slow/hung scanner can't stall the
     whole job, but generous (10 min) so a legitimately slow scan on a large repo
     (Trivy/Semgrep DB build, big monorepo) isn't cut off and its findings dropped.
-    Tools run in parallel, so this is a per-tool cap, not the total. Override with
-    SAP_TOOL_TIMEOUT (seconds)."""
+    Tools run in parallel, so this is a per-tool cap, not the total. Precedence:
+    a per-adapter override (ToolAdapter.timeout, via the thread-local) > the
+    SAP_TOOL_TIMEOUT env var > the 600s default."""
+    override = getattr(_TLS, "timeout", None)
+    if override:
+        return int(override)
     try:
         return int(os.environ.get("SAP_TOOL_TIMEOUT", "600"))
     except ValueError:
@@ -186,8 +196,23 @@ def parse_sarif(data, tool: str = "semgrep") -> list:
                 "line": int(line or 0),
                 "fix": help_txt[:300],
                 "tool": tool,
+                "rule_key": rule_id, "cwe_id": _sarif_cwe(rule),
             })
     return out
+
+
+def _sarif_cwe(rule: dict) -> str:
+    """Extract a CWE number from a SARIF rule's properties (semgrep et al. put it
+    in properties.cwe or properties.tags as 'CWE-89: ...'). '' when absent."""
+    props = rule.get("properties", {}) or {}
+    src = props.get("cwe") or props.get("tags") or []
+    if isinstance(src, str):
+        src = [src]
+    for tag in src:
+        m = re.search(r"CWE-(\d+)", str(tag))
+        if m:
+            return m.group(1)
+    return ""
 
 
 def _cvss_band(score) -> str:
@@ -246,6 +271,7 @@ def parse_trivy(data) -> list:
                 "fix": (f"Upgrade {pkg} to >= {fixed}." if fixed
                         else "No fixed version published yet — assess exposure / pin away."),
                 "tool": "trivy",
+                "vuln_id": vid, "signature": pkg,
             })
     return out
 
@@ -276,6 +302,11 @@ def parse_osv(data) -> list:
             version = info.get("version", "")
             for vuln in pkg.get("vulnerabilities", []) or []:
                 vid = vuln.get("id", "")
+                # OSV keys advisories by GHSA/PYSEC/MAL; prefer the CVE alias as the
+                # dedup id so the SAME advisory collapses with Trivy/pip-audit/grype
+                # (which surface the CVE). MAL- advisories have no CVE → keep the id.
+                aliases = vuln.get("aliases", []) or []
+                canonical = next((a for a in aliases if a.upper().startswith("CVE-")), vid)
                 malicious = vid.startswith("MAL-") or "malicious" in \
                     (vuln.get("summary", "").lower())
                 sev = "CRITICAL" if malicious else _osv_severity(vuln)
@@ -291,6 +322,7 @@ def parse_osv(data) -> list:
                             "it is flagged as malicious." if malicious else
                             "Upgrade to a patched version; see the OSV advisory."),
                     "tool": "osv-scanner",
+                    "vuln_id": canonical, "signature": name,
                 })
     return out
 

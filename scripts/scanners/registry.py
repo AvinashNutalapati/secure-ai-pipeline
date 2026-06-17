@@ -121,6 +121,7 @@ class ToolAdapter:
     ci_install: str = ""                        # shell snippet to install it in CI (optional)
     available_fn: Optional[Callable[[], bool]] = None  # override binary check
     heavy: bool = False                         # slow/expensive — only with deep-scan
+    timeout: Optional[int] = None               # per-tool wall-clock cap (s); None = global default
 
     def available(self) -> bool:
         if self.available_fn is not None:
@@ -146,10 +147,30 @@ def register(adapter: ToolAdapter) -> ToolAdapter:
 
 
 def finding(severity: str, title: str, detail: str = "", file: str = "",
-            line: int = 0, fix: str = "", tool: str = "") -> dict:
-    """Build a normalised finding dict — the one shape every adapter emits."""
+            line: int = 0, fix: str = "", tool: str = "", *,
+            vuln_id: str = "", rule_key: str = "", cwe_id: str = "",
+            signature: str = "", confidence: str = "", reachable: str = "",
+            sources=None) -> dict:
+    """Build a normalised finding dict — the one shape every adapter emits.
+
+    The first eight fields are the long-standing shape. The trailing keyword-only
+    fields are the *identity* substrate that lets consolidation.py collapse the
+    same issue reported by several tools into one finding (see that module):
+      - ``vuln_id``    CVE / GHSA / OSV / MAL advisory id (SCA, packages)
+      - ``rule_key``   the tool's native rule id (SAST/IaC/CI)
+      - ``cwe_id``     canonical CWE (e.g. "89") — the cross-tool SAST key
+      - ``signature``  secondary identity: sha256(secret value) for secrets,
+                       normalised package name for SCA
+      - ``confidence`` e.g. "verified" (TruffleHog live-verify, OSV MAL-)
+      - ``reachable``  "", "true", or "false" (dependency reachability triage)
+      - ``sources``    tool names that confirmed this finding (filled on merge)
+    All default empty, so every existing adapter and test keeps working unchanged.
+    """
     return {"severity": _ext._norm_sev(severity), "title": title, "detail": detail,
-            "file": file, "line": int(line or 0), "fix": fix, "tool": tool}
+            "file": file, "line": int(line or 0), "fix": fix, "tool": tool,
+            "vuln_id": vuln_id, "rule_key": rule_key, "cwe_id": cwe_id,
+            "signature": signature, "confidence": confidence,
+            "reachable": reachable, "sources": list(sources or [])}
 
 
 @functools.lru_cache(maxsize=8)
@@ -272,14 +293,16 @@ register(ToolAdapter(
 register(ToolAdapter(
     name="semgrep", scan_type="sast", binary="semgrep",
     run=lambda ctx: _ext.run_semgrep(ctx.root, extra_config=ctx.semgrep_ruleset),
-    install=_ext.INSTALL_HINTS["semgrep"], ci_install="pip install semgrep"))
+    install=_ext.INSTALL_HINTS["semgrep"], ci_install="pip install semgrep",
+    timeout=900))  # rule compile + scan on a big monorepo can exceed the default
 
 register(ToolAdapter(
     name="trivy", scan_type="sca", binary="trivy",
     run=lambda ctx: _ext.run_trivy(ctx.root),
     install=_ext.INSTALL_HINTS["trivy"],
     ci_install="curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/"
-               "install.sh | sh -s -- -b /usr/local/bin"))
+               "install.sh | sh -s -- -b /usr/local/bin",
+    timeout=900))  # first run builds/updates the vuln DB
 
 register(ToolAdapter(
     name="osv-scanner", scan_type="sca", binary="osv-scanner",

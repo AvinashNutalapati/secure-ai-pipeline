@@ -11,6 +11,7 @@ stdlib only.
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional
 
 from external_tools import _run, _which
@@ -31,6 +32,10 @@ def parse(data, source: str = "") -> list:
             if isinstance(v, dict):
                 title, url = v.get("title", ""), v.get("url", "")
                 break
+        # GHSA id from the advisory URL is the cross-tool dedup key (OSV/Trivy
+        # surface the same GHSA); fall back to none so it keys by location.
+        m = re.search(r"GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}", url or "", re.I)
+        vid = m.group(0).upper() if m else ""
         fix = info.get("fixAvailable")
         if fix is True:
             fixtext = "Run `npm audit fix`."
@@ -44,7 +49,7 @@ def parse(data, source: str = "") -> list:
             f"{name} — {title or 'known vulnerability'}",
             (title or "") + (f"\n{url}" if url else "")
             + f"\nPackage: {name} ({info.get('range', '')})" + (f"  ({source})" if source else ""),
-            source, 0, fixtext, "npm-audit"))
+            source, 0, fixtext, "npm-audit", vuln_id=vid, signature=name))
     return out
 
 

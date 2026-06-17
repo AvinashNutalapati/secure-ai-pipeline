@@ -33,7 +33,7 @@ def parse(data) -> list:
             (f"\nCWE-{cwe}" if cwe else "") + f"\nconfidence: {i.get('confidence', '')}",
             i.get("file", ""), int(line) if line.isdigit() else 0,
             "Apply the secure Go idiom this gosec rule describes.",
-            "gosec"))
+            "gosec", rule_key=rid, cwe_id=str(cwe or "")))
     return out
 
 
