@@ -8,7 +8,7 @@ _LONG_DESCRIPTION = (Path(__file__).parent / "README.md").read_text(encoding="ut
 
 setup(
     name="secure-ai-pipeline",
-    version="3.2.2",
+    version="3.3.0",
     description="Security for AI-assisted development — AI Agent Blast Radius checkup + code pipeline",
     long_description=_LONG_DESCRIPTION,
     long_description_content_type="text/markdown",

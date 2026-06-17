@@ -1,6 +1,6 @@
 {
   "name": "secure-ai-pipeline",
-  "version": "3.2.2",
+  "version": "3.3.0",
   "description": "Security for AI-assisted development — AI Agent Blast Radius checkup + code pipeline",
   "bin": {
     "secure-ai-pipeline": "./cli/init.js"
