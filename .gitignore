@@ -25,3 +25,6 @@ extensions/vscode/out/
 
 # Generated fix prompts
 .secure-ai-pipeline/
+
+# Internal planning doc — never commit
+AI_SECURITY_ENHANCEMENT_PLAN.md

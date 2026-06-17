@@ -27,7 +27,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scanners import SEVERITIES  # noqa: E402
-from scanners.posture import ai_ide, claude_settings, github_actions, mcp_config  # noqa: E402
+from scanners.posture import (  # noqa: E402
+    ai_ide, claude_settings, custom_rules, exfiltration_patterns, github_actions,
+    integrity, mcp_config, unicode_injection,
+)
 from scanners.secrets import config_secrets, prompt_privacy  # noqa: E402
 from scanners.base import Finding, grade_of, score_from_counts  # noqa: E402
 import policy as policy_mod  # noqa: E402
@@ -37,6 +40,10 @@ OFFLINE_SCANNERS = {
     "claude": claude_settings.scan,
     "mcp": mcp_config.scan,
     "github_actions": github_actions.scan,
+    "unicode": unicode_injection.scan,
+    "integrity": integrity.scan,
+    "exfiltration": exfiltration_patterns.scan,
+    "custom": custom_rules.scan,
     "prompt_privacy": prompt_privacy.scan,
     "secrets": config_secrets.scan,
 }
@@ -83,6 +90,17 @@ def package_findings(root: Path) -> list[Finding]:
             f"{w['registry']} was unreachable while checking '{w['package']}'.",
             "Re-run when the registry is reachable.",
             w["file"],
+        ))
+    for s in result.get("suspect", []):
+        out.append(Finding(
+            "packages", "Dependency trust", "pkg-typosquat-suspect", "MEDIUM",
+            f"Possible typosquat: {s['package']} (looks like '{s['suggestion']}')",
+            f"'{s['package']}' (imported in {s['file']}) exists on {s['registry']} but "
+            f"is 1-2 edits from the popular package '{s['suggestion']}' — a classic "
+            "typosquat shape. Confirm you meant this exact package.",
+            f"If you meant '{s['suggestion']}', fix the import; otherwise verify "
+            f"'{s['package']}' is the intended, trustworthy package.",
+            s["file"],
         ))
     return out
 

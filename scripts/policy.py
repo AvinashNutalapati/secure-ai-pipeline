@@ -42,6 +42,9 @@ DEFAULT_POLICY = {
     "mcp": {
         "allowed_servers": [],
     },
+    # User-defined posture regex rules (see scanners/posture/custom_rules.py).
+    # A list of {id, pattern, severity, files?, message?, fix?}.
+    "custom_posture_rules": [],
 }
 
 

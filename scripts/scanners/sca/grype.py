@@ -39,7 +39,7 @@ def parse(data) -> list:
             path, 0,
             (f"Upgrade {name} to {fixed}." if fixed
              else "No fixed version published yet — assess exposure or replace the dependency."),
-            "grype"))
+            "grype", vuln_id=vid, signature=name))
     return out
 
 

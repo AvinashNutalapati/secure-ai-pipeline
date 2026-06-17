@@ -25,6 +25,7 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field, asdict
@@ -38,6 +39,7 @@ import run_pipeline as rp  # noqa: E402
 import blast_radius as br  # noqa: E402
 import policy as policy_mod  # noqa: E402
 from scanners import registry  # noqa: E402
+from scanners import consolidation  # noqa: E402
 from scanners.secrets import config_secrets as secrets_in_config, prompt_privacy  # noqa: E402
 
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
@@ -61,6 +63,19 @@ SOURCE_EXTS = (".py", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")
 MAX_FILE_BYTES = 1_500_000  # skip giant/minified files in the built-in scanners
 
 
+def _cwe_num(cwe: str) -> str:
+    """'CWE-89: ...' → '89'. The canonical SAST key shared with OSS SAST tools."""
+    import re as _re
+    m = _re.search(r"CWE-(\d+)", cwe or "")
+    return m.group(1) if m else ""
+
+
+# rule id → CWE number, from the canonical catalog, so the built-in SAST fallback
+# dedups against semgrep/bandit/gosec on the same (cwe, file, line).
+from scanners.sast.ai_insecure_defaults import RULES as _AI_RULES  # noqa: E402
+_CANON_CWE = {r["id"]: _cwe_num(r.get("cwe", "")) for r in _AI_RULES}
+
+
 @dataclass
 class ScanFinding:
     scan_type: str
@@ -71,6 +86,15 @@ class ScanFinding:
     line: int = 0
     fix: str = ""
     tool: str = ""
+    # Identity substrate for cross-tool de-duplication (see scanners/consolidation.py).
+    # All optional/defaulted so existing positional construction stays valid.
+    vuln_id: str = ""        # CVE / GHSA / OSV / MAL id (SCA, packages)
+    rule_key: str = ""       # the tool's native rule id (SAST/IaC/CI)
+    cwe_id: str = ""         # canonical CWE number — the cross-tool SAST key
+    signature: str = ""      # secret-value hash (secrets) / normalised pkg (SCA)
+    confidence: str = ""     # e.g. "verified"
+    reachable: str = ""      # "", "true", "false"
+    sources: list = field(default_factory=list)  # tools that confirmed it (set on merge)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -82,6 +106,7 @@ class Layer:
     engine: str                       # which scanner ran (e.g. "semgrep" or "built-in")
     findings: list = field(default_factory=list)
     note: str = ""                    # e.g. "install semgrep for deeper coverage"
+    stats: dict = field(default_factory=dict)  # dedup observability: {raw, merged, dropped}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -169,18 +194,26 @@ def builtin_sast(root: Path) -> list:
         for f in rp.stage1_sast(p):
             out.append(ScanFinding("sast", ext._norm_sev(f.severity),
                                    f.message.split(".")[0], f.message,
-                                   _rel(p, root), f.line, f.message, "built-in"))
+                                   _rel(p, root), f.line, f.message, "built-in",
+                                   rule_key=f.rule_id, cwe_id=_CANON_CWE.get(f.rule_id, "")))
     return out
 
 
 def builtin_packages(root: Path, offline: bool) -> list:
     """Supply-chain integrity: hallucinated / non-existent / registry-unreachable
-    imports (anti-slopsquatting). The unique check no external tool does."""
+    imports (anti-slopsquatting). The unique check no external tool does. Plus
+    offline lockfile-integrity + known-malicious-denylist checks (no network)."""
     out: list = []
     if not offline:
         for f in br.package_findings(root):
             out.append(ScanFinding("packages", f.severity, f.title, f.detail,
                                    f.file, f.line, f.fix, "built-in (anti-slopsquatting)"))
+    # Offline-safe: lockfile integrity hashes + the malicious-name denylist.
+    from scanners.packages import lockfile_integrity
+    for r in lockfile_integrity.scan(root):
+        out.append(ScanFinding("packages", r["severity"], r["title"], r["detail"],
+                               r["file"], r["line"], r["fix"], "built-in (supply-chain)",
+                               vuln_id=r.get("vuln_id", ""), rule_key=r.get("rule_key", "")))
     return out
 
 
@@ -201,9 +234,11 @@ def builtin_sca(root: Path, offline: bool) -> list:
             m = re.search(r"\(fix:\s*([^)]+)\)", f.message)
             fixtext = f"Upgrade to {m.group(1).strip()}." if m else \
                 "Upgrade to a patched release (see the advisory)."
+            pkg = (f.snippet or "").split("==")[0].strip()
             out.append(ScanFinding("sca", ext._norm_sev(f.severity), f.message.split(" (fix")[0],
                                    f.message, _rel(req, root), f.line, fixtext,
-                                   "built-in (curated CVEs)"))
+                                   "built-in (curated CVEs)",
+                                   vuln_id=f.rule_id, signature=pkg))
     return out
 
 
@@ -214,7 +249,11 @@ def builtin_sca(root: Path, offline: bool) -> list:
 def _from_ext(scan_type: str, rows: list) -> list:
     return [ScanFinding(scan_type, ext._norm_sev(r["severity"]), r["title"],
                         r.get("detail", ""), r.get("file", ""), int(r.get("line") or 0),
-                        r.get("fix", ""), r.get("tool", "")) for r in rows]
+                        r.get("fix", ""), r.get("tool", ""),
+                        vuln_id=r.get("vuln_id", ""), rule_key=r.get("rule_key", ""),
+                        cwe_id=r.get("cwe_id", ""), signature=r.get("signature", ""),
+                        confidence=r.get("confidence", ""), reachable=r.get("reachable", ""),
+                        sources=list(r.get("sources") or [])) for r in rows]
 
 
 # Per-scan-type built-in fallback policy. Each entry: (fn(ctx) -> list[ScanFinding],
@@ -231,6 +270,128 @@ BUILTIN_FALLBACK = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Autofix (opt-in `--fix`): deterministic single-token rewrites only
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _autofix_rules():
+    """(rule_id, line-gate regex, find regex, replacement) for catalog rules that
+    declare a deterministic `autofix`. Only these are ever auto-applied."""
+    out = []
+    for r in _AI_RULES:
+        af = r.get("autofix")
+        if af and r.get("py"):
+            out.append((r["id"], re.compile(r["py"]),
+                        re.compile(af["find"]), af["repl"]))
+    return out
+
+
+def _advance_triple_state(line: str, in_str):
+    """Track triple-quoted string state across lines (approximate: ignores escapes
+    and same-line single quotes, which is fine for skipping docstring bodies)."""
+    i = 0
+    while i < len(line):
+        if in_str:
+            j = line.find(in_str, i)
+            if j == -1:
+                return in_str
+            i, in_str = j + 3, None
+        else:
+            cands = [x for x in (line.find('"""', i), line.find("'''", i)) if x != -1]
+            if not cands:
+                return None
+            d = min(cands)
+            in_str, i = line[d:d + 3], d + 3
+    return in_str
+
+
+def autofix(root: Path) -> list:
+    """Apply deterministic fixes in place to source files. Returns a list of
+    (file, line, rule_id, before, after). Skips comments, suppressed lines, lines
+    inside triple-quoted strings (docstrings), and the rule-source catalog;
+    preserves line endings (CRLF/LF); idempotent (re-running finds nothing)."""
+    rules = _autofix_rules()
+    changes = []
+    for p in _walk_sources(root):
+        try:
+            # newline="" disables newline translation so CRLF files round-trip.
+            with open(p, "r", encoding="utf-8", newline="") as fh:
+                original = fh.read()
+        except OSError:
+            continue
+        lines = original.splitlines(keepends=True)
+        touched = False
+        in_str = None
+        for idx, line in enumerate(lines):
+            started_in_str = in_str is not None
+            in_str = _advance_triple_state(line, in_str)
+            stripped = line.lstrip()
+            if (started_in_str or stripped.startswith(("#", "//", "*"))
+                    or rp._SUPPRESS_RE.search(line)):
+                continue  # inside a docstring / comment / suppressed → never rewrite
+            new_line = line
+            for rule_id, gate, find, repl in rules:
+                if gate.search(new_line):
+                    replaced = find.sub(repl, new_line)
+                    if replaced != new_line:
+                        changes.append((_rel(p, root), idx + 1, rule_id,
+                                        new_line.strip(), replaced.strip()))
+                        new_line = replaced
+            if new_line != line:
+                lines[idx] = new_line
+                touched = True
+        if touched:
+            try:
+                with open(p, "w", encoding="utf-8", newline="") as fh:
+                    fh.write("".join(lines))
+            except OSError:
+                pass
+    return changes
+
+
+def _reachable_dists(root: Path) -> set:
+    """Normalised distribution names actually imported anywhere in the repo — the
+    input to SCA reachability triage. AI-written code pulls in far more deps than
+    it uses; a CVE in an unimported package is real but lower priority. Reuses the
+    slopsquatting import extractors so the import logic lives in one place."""
+    names: set = set()
+    for py in root.rglob("*.py"):
+        if check_packages._skip(py):
+            continue
+        for n in check_packages.extract_python_imports(py):
+            names.add(check_packages.IMPORT_TO_PYPI.get(n, n))
+    for pattern in check_packages.JS_GLOBS:
+        for js in root.rglob(pattern):
+            if check_packages._skip(js):
+                continue
+            names |= check_packages.extract_js_imports(js)
+    return {n.lower().replace("-", "_") for n in names}
+
+
+def _ignored(f: "ScanFinding", ignore: set) -> bool:
+    """True if a policy `ignore:` token matches this finding's identity. Tokens can
+    be a rule id (rule_key), a CVE/advisory id (vuln_id), a CWE ('89' or 'CWE-89'),
+    or a tool name — matched case-insensitively so one entry covers every tool."""
+    low = {t.lower() for t in ignore}
+    ids = {(f.rule_key or "").lower(), (f.vuln_id or "").lower(), (f.tool or "").lower()}
+    if f.cwe_id:
+        ids |= {f.cwe_id.lower(), f"cwe-{f.cwe_id}".lower()}
+    ids.discard("")
+    return bool(low & ids)
+
+
+def _tag_reachability(layer: "Layer", root: Path) -> None:
+    """Mark each SCA finding reachable=true|false by whether its package is imported.
+    Leaves reachable='' when the package can't be determined (no over-claiming)."""
+    if not layer or not any(f.signature for f in layer.findings):
+        return
+    reachable = _reachable_dists(root)
+    for f in layer.findings:
+        pkg = (f.signature or "").lower().replace("-", "_")
+        if pkg:
+            f.reachable = "true" if pkg in reachable else "false"
+
+
 def _progress(msg: str) -> None:
     """Stream scan progress to stderr so a long CI step never looks frozen.
     stdout carries the table / --json path, so progress stays on stderr."""
@@ -239,12 +400,17 @@ def _progress(msg: str) -> None:
 
 def _run_adapter(adapter, ctx) -> tuple:
     """Run one tool, timed, swallowing any error (a broken tool is skipped, not
-    fatal). Returns (rows|None, elapsed_seconds)."""
+    fatal). Returns (rows|None, elapsed_seconds). Applies the adapter's per-tool
+    timeout via a thread-local the subprocess runner reads (safe: each adapter runs
+    on its own worker thread)."""
     t0 = time.monotonic()
+    ext._TLS.timeout = adapter.timeout
     try:
         rows = adapter.run(ctx)
     except Exception:
         rows = None
+    finally:
+        ext._TLS.timeout = None
     return rows, time.monotonic() - t0
 
 
@@ -267,6 +433,16 @@ def _assemble_layer(scan_type: str, ext_results: list, ctx: "registry.ScanContex
             findings += fn(ctx)
             engines.append("built-in")
 
+    # Collapse duplicates across every tool that ran for this type — the single
+    # place all channels (CLI/HTML/JSON/SARIF/MCP) inherit de-duplication from.
+    # Same issue from N tools → one finding carrying all N in `sources`.
+    raw_count = len(findings)
+    findings = [ScanFinding(**d) for d in
+                consolidation.consolidate(scan_type, [f.to_dict() for f in findings])]
+    # Dedup observability: how many duplicate rows the consolidation removed (E5).
+    stats = {"raw": raw_count, "merged": len(findings),
+             "dropped": raw_count - len(findings)}
+
     # When no real OSS tool ran (built-in-only, or nothing), point at what to install.
     note = ""
     if not any(e != "built-in" for e in engines):
@@ -276,7 +452,7 @@ def _assemble_layer(scan_type: str, ext_results: list, ctx: "registry.ScanContex
                     + f" for deeper {LABELS.get(scan_type, scan_type)} coverage — "
                     + missing[0].install)
     engine = " + ".join(dict.fromkeys(engines)) if engines else "not run"
-    return Layer(scan_type, engine, findings, note=note)
+    return Layer(scan_type, engine, findings, note=note, stats=stats)
 
 
 def builtin_ai_posture(ctx: "registry.ScanContext") -> list:
@@ -286,7 +462,8 @@ def builtin_ai_posture(ctx: "registry.ScanContext") -> list:
     # ai_posture built-in fallback; external ai_posture adapters merge alongside it.
     report = policy_mod.apply(br.assess(ctx.root, offline=True), ctx.policy or {})
     return [ScanFinding("ai_posture", f["severity"], f["title"], f.get("detail", ""),
-                        f.get("file", ""), int(f.get("line") or 0), f.get("fix", ""), "built-in")
+                        f.get("file", ""), int(f.get("line") or 0), f.get("fix", ""), "built-in",
+                        rule_key=f.get("rule_id", ""))
             for f in report["findings"]]
 
 
@@ -302,7 +479,13 @@ def run_dast(url: str, ctx: "registry.ScanContext") -> Layer:
     if not engines:
         return Layer("dast", "unavailable", [],
                      note=f"install ZAP or Docker to run DAST — {ext.INSTALL_HINTS['docker']}")
-    return Layer("dast", " + ".join(dict.fromkeys(engines)), findings, note=f"target: {url}")
+    # Same de-dup the other layers get, in case two DAST adapters overlap.
+    raw_count = len(findings)
+    findings = [ScanFinding(**d) for d in
+                consolidation.consolidate("dast", [f.to_dict() for f in findings])]
+    stats = {"raw": raw_count, "merged": len(findings), "dropped": raw_count - len(findings)}
+    return Layer("dast", " + ".join(dict.fromkeys(engines)), findings,
+                 note=f"target: {url}", stats=stats)
 
 
 def _scan_context(root: Path, offline: bool, dast_url: str = "") -> "registry.ScanContext":
@@ -375,6 +558,18 @@ def orchestrate(root: Path, *, offline: bool, only: list, dast_url: str = "",
         for lyr in layers.values():
             lyr.findings = [f for f in lyr.findings
                             if not policy_mod._excluded(f.file, excludes)]
+
+    # Policy `ignore:` suppresses by the consolidated IDENTITY (rule id / CVE / CWE /
+    # tool), so one suppression silences a finding across every tool that reports it
+    # — not just one tool's native wording. Applies to all layers uniformly.
+    ignore = {str(x).strip() for x in (pol.get("ignore") or []) if str(x).strip()}
+    if ignore:
+        for lyr in layers.values():
+            lyr.findings = [f for f in lyr.findings if not _ignored(f, ignore)]
+
+    # Reachability triage: tag SCA findings by whether the package is imported.
+    _tag_reachability(layers.get("sca"), root)
+
     return {"root": str(root), "tools": registry.detect(), "layers": layers,
             "excludes": excludes, "ctx": ctx}
 
@@ -455,6 +650,10 @@ def render_compact(result: dict, no_color: bool = False, group_cap: int = 12) ->
                                      f"(run --detail {t})", on))
         if lyr.note:
             out.append(_c("DIM", f"      ⓘ {lyr.note}", on))
+        dropped = lyr.stats.get("dropped", 0)
+        if dropped > 0:
+            out.append(_c("DIM", f"      ✓ {dropped} duplicate finding(s) merged "
+                                 "across tools (de-duplicated)", on))
         out.append("")
 
     if "dast" not in layers:
@@ -494,6 +693,9 @@ def render_detail(result: dict, scan_type: str, no_color: bool = False) -> str:
         out.append(f"  {_c(f.severity, '● ' + f.severity, on)}  {f.title}")
         if loc:
             out.append(_c("DIM", f"      {loc}", on))
+        if len(f.sources) > 1:
+            out.append(_c("OK", f"      ✓ confirmed by {len(f.sources)} tools: "
+                                f"{', '.join(f.sources)}", on))
         detail = _first_line(f.detail)
         if detail:
             out.append(f"      {detail}")
@@ -635,27 +837,40 @@ _SARIF_SCORE = {"CRITICAL": "9.5", "HIGH": "8.0", "MEDIUM": "5.0", "LOW": "2.0",
 def render_sarif(result: dict) -> dict:
     """One SARIF 2.1.0 document covering every layer/tool, so a single upload
     populates GitHub code scanning with the whole consolidated result."""
+    from scanners import taxonomy
     rules: dict = {}
     results: list = []
     for stype, lyr in result["layers"].items():
         for f in lyr.findings:
             if f.severity == "INFO":
                 continue
-            rid = f"sap/{stype}/{f.tool or 'built-in'}"
+            # Group rules by CWE when known (so the CWE tag is accurate for the
+            # whole rule), else by tool. Adds GitHub-recognised CWE links + OWASP/
+            # ATLAS tags for governance reporting.
+            tax = taxonomy.tags_for(f.rule_key, f.cwe_id)
+            rid = (f"sap/{stype}/cwe-{f.cwe_id}" if f.cwe_id
+                   else f"sap/{stype}/{f.tool or 'built-in'}")
             if rid not in rules:
                 rules[rid] = {
                     "id": rid, "name": rid.replace("/", "-"),
                     "shortDescription": {"text": f"{LABELS.get(stype, stype)} · {f.tool or 'built-in'}"},
                     "properties": {"security-severity": _SARIF_SCORE.get(f.severity, "5.0"),
-                                   "tags": ["security", stype]}}
+                                   "tags": ["security", stype] + tax}}
+            srcs = [s for s in (list(f.sources) if f.sources else [f.tool]) if s]
+            confirmed = (f"\n\nConfirmed by {len(srcs)} tools: {', '.join(srcs)}"
+                         if len(srcs) > 1 else "")
             results.append({
                 "ruleId": rid,
                 "level": _SARIF_LEVEL.get(f.severity, "warning"),
-                "message": {"text": f.title + (f"\n\nFix: {f.fix}" if f.fix else "")},
+                "message": {"text": f.title + (f"\n\nFix: {f.fix}" if f.fix else "") + confirmed},
                 "locations": [{"physicalLocation": {
                     "artifactLocation": {"uri": (f.file or ".").lstrip("/")},
                     "region": {"startLine": max(1, int(f.line or 1))}}}],
-                "properties": {"tool": f.tool, "severity": f.severity},
+                # Stable identity so GitHub code scanning de-dupes the SAME finding
+                # across runs (and never shows the K tool-copies as K alerts).
+                "partialFingerprints": {
+                    "primaryLocationLineHash": consolidation.fingerprint_hash(stype, f)},
+                "properties": {"tool": f.tool, "severity": f.severity, "tools": srcs},
             })
     return {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
@@ -693,6 +908,10 @@ def main(argv=None) -> int:
     parser.add_argument("--exclude", default="",
                         help="Comma-separated path globs to drop from every layer "
                              "(e.g. 'test/**,data/**'). Merged with the policy file's exclude.")
+    parser.add_argument("--reachable-only", action="store_true",
+                        help="Drop SCA findings whose package is definitively NOT "
+                             "imported anywhere (reachability triage). Findings whose "
+                             "package can't be resolved are KEPT (fail-closed).")
     parser.add_argument("--detail", default="",
                         help="Expand one or more layers: a type, comma-list, or 'all'.")
     parser.add_argument("--dast-url", default="", help="Run a ZAP DAST scan against this URL.")
@@ -710,17 +929,41 @@ def main(argv=None) -> int:
     parser.add_argument("--no-input", action="store_true",
                         help="Never prompt (CI mode).")
     parser.add_argument("--no-color", action="store_true")
+    parser.add_argument("--fix", action="store_true",
+                        help="Apply deterministic autofixes in place (verify=False→True, "
+                             "debug=True→False, 0.0.0.0→127.0.0.1) for the rules that "
+                             "declare one, then scan. Review the diff; re-run is a no-op.")
     parser.add_argument("--tools", action="store_true",
                         help="Show which scanner engines are installed, then scan.")
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
+
+    if args.fix:
+        applied = autofix(root)
+        on = _color_on(args.no_color)
+        if applied:
+            print(_c("B", f"\n  Autofix applied {len(applied)} change(s):", on))
+            for f, ln, rid, before, after in applied:
+                print(_c("DIM", f"    {f}:{ln} [{rid}]", on))
+                print(f"      - {before}")
+                print(_c("OK", f"      + {after}", on))
+            print(_c("DIM", "  Review the diff (git diff) before committing.\n", on))
+        else:
+            print(_c("DIM", "\n  Autofix: nothing to fix.\n", on))
     only = [s.strip() for s in args.only.split(",") if s.strip()]
     cli_excludes = [s.strip() for s in args.exclude.split(",") if s.strip()]
     interactive = sys.stdin.isatty() and not args.no_input
 
     result = orchestrate(root, offline=args.offline, only=only,
                          dast_url=args.dast_url, exclude=cli_excludes, deep=args.deep)
+
+    if args.reachable_only and "sca" in result["layers"]:
+        # Drop only definitively-unreachable findings; keep reachable AND
+        # undetermined ("") so a CVE whose package we couldn't resolve is never
+        # silently hidden (a false sense of security is worse than a little noise).
+        lyr = result["layers"]["sca"]
+        lyr.findings = [f for f in lyr.findings if f.reachable != "false"]
 
     if args.tools:
         print(render_tools(result, no_color=args.no_color))
@@ -755,7 +998,7 @@ def main(argv=None) -> int:
         Path(args.json).write_text(json.dumps({
             "root": result["root"],
             "tools": {k: bool(v) for k, v in result["tools"].items()},
-            "layers": {t: {"engine": l.engine, "note": l.note,
+            "layers": {t: {"engine": l.engine, "note": l.note, "stats": l.stats,
                            "findings": [f.to_dict() for f in l.findings]}
                        for t, l in result["layers"].items()},
         }, indent=2), encoding="utf-8")

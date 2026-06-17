@@ -212,6 +212,32 @@ def test_secrets_deduped_by_location(tmp_path):
     assert "SAST — ⚠️ 2 finding(s)" in two
 
 
+def test_secrets_dedup_merges_sources(tmp_path):
+    # When the native gitleaks SARIF and the scan_all secrets layer collapse to one
+    # finding, the dropped row's tool must survive in the kept finding's sources so
+    # the "engines:" line still credits it (regression: sources were lost on dedup).
+    sarif = _w(tmp_path, "gl.sarif", _sarif([_result(
+        "gitleaks", "error", "AWS Access Key", "x.env", 12)]))
+    scan_all = js.load_scan_all(_w(tmp_path, "scan.json", {"layers": {
+        "secrets": {"engine": "trufflehog", "findings": [
+            {"severity": "CRITICAL", "title": "Verified AWS", "fix": "rotate",
+             "file": "x.env", "line": 12, "tool": "trufflehog",
+             "sources": ["trufflehog", "detect-secrets"]}]}}}))
+    md, _ = js.build([("secrets", "Secrets", sarif)], scan_all=scan_all)
+    assert "Secrets — ⚠️ 1 finding(s)" in md
+    assert "trufflehog" in md and "detect-secrets" in md   # both survive in engines line
+
+
+def test_dedup_merges_sources_directly():
+    kept = js._dedup([
+        {"level": "error", "msg": "same", "file": "a", "line": 1, "tool": "trivy",
+         "sources": ["trivy"]},
+        {"level": "error", "msg": "same", "file": "a", "line": 1, "tool": "grype",
+         "sources": ["grype"]}], scan_type="sca")
+    assert len(kept) == 1
+    assert set(kept[0]["sources"]) == {"trivy", "grype"}
+
+
 def test_section_only_omits_header_and_combined_prompt(tmp_path):
     pkgs = _w(tmp_path, "p.json", {"blocked": [
         {"package": "evilpkg", "registry": "pypi", "file": "a"}], "warnings": [], "ok": []})

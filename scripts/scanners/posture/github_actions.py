@@ -20,6 +20,12 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 PR_TARGET_RE = re.compile(r"pull_request_target")
 EVENT_INTERP_RE = re.compile(r"\$\{\{\s*github\.event\.[^}]*\}\}")
 RUN_RE = re.compile(r"^\s*(?:-\s*)?run:\s|^\s*run:\s*\|")
+SECRET_USE_RE = re.compile(r"\$\{\{\s*secrets\.")
+SECRETS_INHERIT_RE = re.compile(r"secrets:\s*inherit\b")
+# Checking out the PR HEAD ref under pull_request_target = running untrusted code
+# with secrets — the classic "pwn request".
+CHECKOUT_PR_REF_RE = re.compile(
+    r"ref:\s*\$\{\{[^}]*(?:github\.event\.pull_request\.head|github\.head_ref)")
 
 
 def _workflow_files(root: Path) -> list[Path]:
@@ -62,8 +68,10 @@ def scan(root: Path) -> list[Finding]:
             continue
 
         # pull_request_target
+        uses_prt = False
         for i, line in enumerate(lines, 1):
             if PR_TARGET_RE.search(line) and not line.strip().startswith("#"):
+                uses_prt = True
                 findings.append(Finding(
                     "github_actions", "CI/CD", "gha-pull-request-target", "CRITICAL",
                     "Workflow uses pull_request_target",
@@ -74,6 +82,22 @@ def scan(root: Path) -> list[Finding]:
                     where, i,
                 ))
                 break
+
+        # pull_request_target + checkout of the PR head ref = the "pwn request".
+        if uses_prt:
+            for i, line in enumerate(lines, 1):
+                if CHECKOUT_PR_REF_RE.search(line) and not line.strip().startswith("#"):
+                    findings.append(Finding(
+                        "github_actions", "CI/CD", "gha-prtarget-untrusted-checkout", "CRITICAL",
+                        "pull_request_target checks out the untrusted PR head",
+                        f"{where}:{i} checks out the PR's head ref while running under "
+                        "pull_request_target — attacker-controlled code then executes "
+                        "with your repository secrets.",
+                        "Don't check out PR head code in pull_request_target; if you "
+                        "must, run it in an isolated job with no secrets.",
+                        where, i,
+                    ))
+                    break
 
         # Script injection via github.event.* — flagged only INSIDE run: blocks.
         # Track the block by indentation so `env:`/`with:` lines after a run
@@ -124,4 +148,32 @@ def scan(root: Path) -> list[Finding]:
                 "uses: owner/action@<sha>  # vX.Y.Z",
                 where, i,
             ))
+            # Worse: this unpinned THIRD-PARTY action is also handed secrets.
+            if not first_party and _step_passes_secret(lines, i):
+                findings.append(Finding(
+                    "github_actions", "CI/CD", "gha-secret-to-untrusted-action", "HIGH",
+                    f"Secrets passed to an unpinned third-party action: {ref}",
+                    f"{where}:{i} passes repository secrets to `{ref}`, which is "
+                    "pinned by a mutable tag — a hijacked tag exfiltrates them.",
+                    "Pin the action to a full commit SHA before giving it secrets, "
+                    "and pass only the narrowest scoped token it needs.",
+                    where, i,
+                ))
     return findings
+
+
+def _step_passes_secret(lines: list, uses_lineno: int) -> bool:
+    """True if the step starting at the given 1-based `uses:` line passes a
+    ${{ secrets.* }} value or `secrets: inherit`. Bounds the scan to the step's
+    own body by indentation (stops at the next `- ` step or any dedent)."""
+    uses_indent = len(lines[uses_lineno - 1]) - len(lines[uses_lineno - 1].lstrip(" "))
+    for j in range(uses_lineno, len(lines)):  # lines after the uses: line
+        nxt = lines[j]
+        if not nxt.strip():
+            continue
+        nind = len(nxt) - len(nxt.lstrip(" "))
+        if nxt.lstrip().startswith("- ") or nind < uses_indent:
+            break  # next step / dedent out of this step's body
+        if SECRET_USE_RE.search(nxt) or SECRETS_INHERIT_RE.search(nxt):
+            return True
+    return False

@@ -27,8 +27,12 @@ def parse(data, source: str = "") -> list:
         version = dep.get("version", "")
         for v in dep.get("vulns", []) or []:
             vid = v.get("id", "")
-            aliases = ", ".join(v.get("aliases", []) or [])
+            alias_list = v.get("aliases", []) or []
+            aliases = ", ".join(alias_list)
             fixed = ", ".join(v.get("fix_versions", []) or [])
+            # Prefer a CVE alias as the dedup id — it's the identifier Trivy/OSV
+            # also key on, so the same advisory collapses across all SCA tools.
+            canonical = next((a for a in alias_list if a.upper().startswith("CVE-")), vid)
             out.append(finding(
                 "HIGH",  # pip-audit reports known advisories without a CVSS band
                 f"{name} {version} — {vid}" + (f" ({aliases})" if aliases else ""),
@@ -37,7 +41,7 @@ def parse(data, source: str = "") -> list:
                 source, 0,
                 (f"Upgrade {name} to {fixed}." if fixed
                  else "No fixed version published — assess exposure or replace the dependency."),
-                "pip-audit"))
+                "pip-audit", vuln_id=canonical, signature=name))
     return out
 
 

@@ -72,6 +72,19 @@ def scan(root: Path) -> list[Finding]:
         allow = perms.get("allow", []) if isinstance(perms, dict) else []
         default_mode = (data.get("defaultMode") or perms.get("defaultMode") or "")
 
+        # Over-permission by volume: a very large pre-approved allow list is a broad
+        # standing blast radius even when each entry is individually scoped.
+        if isinstance(allow, list) and len(allow) >= 25:
+            findings.append(Finding(
+                "claude", "Claude permissions", "claude-excessive-tools", "LOW",
+                f"Claude has a large pre-approved allow list ({len(allow)} rules)",
+                f"{where} pre-approves {len(allow)} actions without prompting — a wide "
+                "standing surface for a prompt-injected agent to act through.",
+                "Apply least privilege: keep the allow list minimal and prefer "
+                "prompting for anything outside the project's routine commands.",
+                where,
+            ))
+
         if str(default_mode).lower() in ("bypasspermissions", "acceptedits"):
             findings.append(Finding(
                 "claude", "Claude permissions", "claude-bypass-mode", "HIGH",

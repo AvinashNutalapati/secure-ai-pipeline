@@ -14,6 +14,39 @@ import re
 from pathlib import Path
 
 from ..base import Finding, rel, skip
+from .unicode_injection import has_hidden_unicode
+
+# Instruction-injection language that has no business in a tool name/description/
+# parameter — the core of an MCP "tool poisoning" attack (the model reads tool
+# metadata as trusted instructions). Invariant Labs' mcp-scan keys on this class.
+INJECTION_PHRASES = re.compile(
+    r"(?i)("
+    # Unambiguous instruction-override / concealment language.
+    r"ignore\s+(?:all\s+)?(?:previous|prior|above)\s+instructions"
+    r"|disregard\s+(?:the\s+)?(?:system|above|previous)"
+    r"|do\s+not\s+(?:tell|inform|mention|reveal|warn|notify)\s+(?:the\s+)?user"
+    r"|without\s+(?:telling|informing|notifying)\s+(?:the\s+)?user"
+    r"|exfiltrat"
+    r"|silently\s+(?:run|execute|send|read|forward)"
+    # "before responding, <do a tool action>" — sequencing an action ahead of the
+    # real request is the tool-poisoning shape (not a bare "before responding").
+    r"|before\s+(?:responding|answering|using\s+any\s+other\s+tool)\b[^.\n]{0,60}\b(?:read|send|fetch|call|run|include|append)\b"
+    # An action verb aimed at a SENSITIVE target — this is what separates a real
+    # poisoning payload from benign docs like "always return JSON". (ai_ide.py uses
+    # the same target-required approach to avoid false positives.)
+    r"|(?:send|forward|read|leak|include|append|return|post)\b[^.\n]{0,40}\b(?:secret|token|api[_ -]?key|credential|password|\.env\b|environment\s+variable|ssh|private\s+key|system\s+prompt|\.aws|\.npmrc)\b"
+    r")"
+)
+
+# Heuristic capability keywords for cross-server attack-path analysis. ("http"/
+# "url" are deliberately NOT here — they match localhost dev servers; a remote URL
+# is detected separately, excluding localhost, in _capabilities.)
+_FS_HINTS = ("filesystem", "server-filesystem", "/files", "fs-server", "files-server")
+_NET_HINTS = ("fetch", "curl", "wget", "brave", "search", "puppeteer",
+              "playwright", "browser", "axios", "requests", "webhook", "slack",
+              "discord", "telegram", "email", "smtp")
+_SHELL_HINTS = ("shell", "bash", "terminal", "command-runner", "run-command", "exec")
+_LOCALHOST_RE = re.compile(r"(?i)localhost|127\.0\.0\.1|\[::1\]|::1|0\.0\.0\.0")
 
 # Config files used by the major MCP hosts.
 MCP_FILENAMES = {
@@ -63,6 +96,53 @@ def _collect_config_files(root: Path) -> list[Path]:
             seen.add(p)
             uniq.append(p)
     return uniq
+
+
+def _walk_strings(obj, path="$"):
+    """Yield (json-path, string) for every string value in a nested config."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from _walk_strings(v, f"{path}.{k}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _walk_strings(v, f"{path}[{i}]")
+    elif isinstance(obj, str):
+        yield path, obj
+
+
+def _iter_input_schemas(obj):
+    """Yield every tool input-schema dict found anywhere in the config."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in ("inputSchema", "input_schema") and isinstance(v, dict):
+                yield v
+            else:
+                yield from _iter_input_schemas(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _iter_input_schemas(v)
+
+
+def _capabilities(name: str, server: dict) -> set:
+    """Best-effort capability tags for a server, for cross-server path analysis."""
+    args = server.get("args") or []
+    url = str(server.get("url") or server.get("serverUrl") or "")
+    # The URL is judged separately (remote vs localhost); everything else feeds the
+    # keyword heuristics so a localhost dev server isn't treated as outbound network.
+    blob = " ".join([name, str(server.get("command", "")),
+                     " ".join(str(a) for a in args if not isinstance(a, dict))]).lower()
+    tags = set()
+    if any(h in blob for h in _FS_HINTS) or any(
+            str(a).rstrip("/") in BROAD_FS_PATHS for a in args):
+        tags.add("filesystem")
+    remote_url = bool(url) and not _LOCALHOST_RE.search(url)
+    if remote_url or any(h in blob for h in _NET_HINTS):
+        tags.add("network")
+    base_cmd = Path(str(server.get("command", ""))).name
+    if base_cmd in SHELL_COMMANDS or PIPE_TO_SHELL.search(blob) \
+            or any(h in blob for h in _SHELL_HINTS):
+        tags.add("shell")
+    return tags
 
 
 def scan(root: Path) -> list[Finding]:
@@ -147,7 +227,7 @@ def scan(root: Path) -> list[Finding]:
                 if not has_auth:
                     findings.append(Finding(
                         "mcp", "MCP", "mcp-remote-unauth", sev,
-                        f"Remote MCP server '{name}' has no auth header",
+                        f"Remote MCP server '{name}' points at {url} with no auth header",
                         f"Server '{name}' points at {url} with no Authorization/"
                         "API-key header. Remote tool output is untrusted input to "
                         "your agent.",
@@ -155,4 +235,77 @@ def scan(root: Path) -> list[Finding]:
                         "authenticated endpoints.",
                         where,
                     ))
+
+        # 5. Tool poisoning — instruction-injection language in any config string
+        #    (tool names/descriptions/params/enums live here in manifests). One
+        #    finding per file is enough signal.
+        poison = next(((jp, s) for jp, s in _walk_strings(data)
+                       if INJECTION_PHRASES.search(s)), None)
+        if poison:
+            jp, s = poison
+            findings.append(Finding(
+                "mcp", "MCP", "mcp-tool-poisoning", "HIGH",
+                f"MCP config contains tool-poisoning language ({where})",
+                f"A string at {jp} reads like an instruction-injection payload: "
+                f"\"{s.strip()[:120]}\". A poisoned tool description hijacks the agent "
+                "the moment the tool list is loaded.",
+                "Treat tool metadata as untrusted; remove override/exfiltration "
+                "language and pin tool definitions (hash) so they can't change silently.",
+                where,
+            ))
+
+        # 6. Hidden Unicode in any config string (covert tool poisoning).
+        uni = next(((jp, has_hidden_unicode(s)) for jp, s in _walk_strings(data)
+                    if has_hidden_unicode(s)), None)
+        if uni:
+            jp, hit = uni
+            findings.append(Finding(
+                "mcp", "MCP", "mcp-tool-hidden-unicode", "CRITICAL",
+                f"Hidden Unicode in an MCP config string ({where})",
+                f"Invisible characters ({hit[4]}) in the string at {jp} — a covert "
+                "tool-poisoning channel a reviewer can't see.",
+                "Remove the invisible characters and review the tool definition's "
+                "true text.",
+                where,
+            ))
+
+        # 7. Permissive tool input schema → a poisoned tool can accept extra args.
+        for schema in _iter_input_schemas(data):
+            if schema.get("additionalProperties") is not False:
+                findings.append(Finding(
+                    "mcp", "MCP", "mcp-permissive-schema", "LOW",
+                    f"MCP tool input schema is permissive ({where})",
+                    "A tool inputSchema does not set additionalProperties:false, so a "
+                    "poisoned or buggy tool can accept unexpected arguments.",
+                    "Set additionalProperties:false on MCP tool input schemas.",
+                    where,
+                ))
+                break  # one note per file
+
+        # 8. Cross-server attack paths — capability combinations that turn a single
+        #    prompt injection into read-local-then-exfiltrate or RCE.
+        caps = {name: _capabilities(name, server) for name, server in servers}
+        fs = sorted(n for n, t in caps.items() if "filesystem" in t)
+        net = sorted(n for n, t in caps.items() if "network" in t)
+        shell = sorted(n for n, t in caps.items() if "shell" in t)
+        if fs and net:
+            findings.append(Finding(
+                "mcp", "MCP", "mcp-cross-server-exfil", "HIGH",
+                f"MCP servers form a read-local + send-remote chain ({where})",
+                f"Filesystem server(s) {fs} together with network server(s) {net} let "
+                "a prompt-injected agent read local files and exfiltrate them.",
+                "Avoid enabling broad-filesystem and outbound-network servers "
+                "together; scope the filesystem server or split the trust domains.",
+                where,
+            ))
+        if shell and net:
+            findings.append(Finding(
+                "mcp", "MCP", "mcp-cross-server-rce", "HIGH",
+                f"MCP servers form a fetch + shell-exec chain ({where})",
+                f"Shell/exec server(s) {shell} together with network server(s) {net} "
+                "let untrusted fetched content drive command execution.",
+                "Don't pair an outbound-network server with a shell/exec server; "
+                "require human approval for shell tools.",
+                where,
+            ))
     return findings
