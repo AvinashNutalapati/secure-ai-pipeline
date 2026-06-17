@@ -51,6 +51,28 @@ def _norm(name: str) -> str:
     return (name or "").strip().lower()
 
 
+# The effective denylist = the in-code seed ∪ the bundled OSV-MAL mirror
+# (malicious_mirror.json, refreshed weekly in CI). Loaded once and cached.
+_MIRROR_PATH = Path(__file__).with_name("malicious_mirror.json")
+_DENYLIST_CACHE = None
+
+
+def _denylist_for(registry: str) -> frozenset:
+    global _DENYLIST_CACHE
+    if _DENYLIST_CACHE is None:
+        merged = {"pypi": set(MALICIOUS_DENYLIST["pypi"]),
+                  "npm": set(MALICIOUS_DENYLIST["npm"])}
+        try:
+            data = json.loads(_MIRROR_PATH.read_text(encoding="utf-8"))
+            for eco in ("pypi", "npm"):
+                merged[eco] |= {_norm(n) for n in (data.get(eco) or []) if n}
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass  # mirror missing/corrupt → fall back to the in-code seed
+        # frozenset so callers get an immutable view and can't corrupt the cache.
+        _DENYLIST_CACHE = {k: frozenset(v) for k, v in merged.items()}
+    return _DENYLIST_CACHE.get(registry, frozenset())
+
+
 def _lockfile_integrity(root: Path) -> list:
     out = []
     for lock in root.rglob("package-lock.json"):
@@ -98,7 +120,7 @@ def _denylist(root: Path) -> list:
 
     def flag(name, registry, where):
         key = (registry, _norm(name), where)
-        if _norm(name) in MALICIOUS_DENYLIST.get(registry, set()) and key not in seen:
+        if _norm(name) in _denylist_for(registry) and key not in seen:
             seen.add(key)
             out.append(finding(
                 "CRITICAL", f"MALICIOUS PACKAGE: {name} ({registry})",

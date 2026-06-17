@@ -95,7 +95,10 @@ def test_orchestrate_only_subset(tmp_path):
     _w(tmp_path, "app.py", "app.run(debug=True)\n")
     result = sa.orchestrate(tmp_path, offline=True, only=["sast"])
     assert set(result["layers"]) == {"sast"}
-    assert result["layers"]["sast"].engine == "built-in"   # no semgrep installed
+    # The debug=True issue is flagged regardless of which SAST engine ran (built-in
+    # when no tool is installed, semgrep/bandit when they are — env-robust).
+    titles = " ".join(f.title for f in result["layers"]["sast"].findings).lower()
+    assert "debug" in titles or "flask" in titles
 
 
 def test_orchestrate_default_runs_all_non_dast(tmp_path):

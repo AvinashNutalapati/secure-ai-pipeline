@@ -1,0 +1,21 @@
+{
+  "_comment": "Offline mirror of known-malicious package names (OSV MAL- / OpenSSF malicious-packages). Refreshed in CI by scripts/sync_malicious_packages.py (weekly cron). The small set below is a committed seed of well-documented IOCs; the sync replaces it with the full feed. Loaded by scanners/packages/lockfile_integrity.py and unioned with its in-code seed.",
+  "version": 1,
+  "source": "https://github.com/ossf/malicious-packages (OSV MAL- advisories)",
+  "generated": "seed",
+  "pypi": [
+    "colourama",
+    "jeilyfish",
+    "python3-dateutil",
+    "djanga",
+    "ssh-decorate"
+  ],
+  "npm": [
+    "crossenv",
+    "cross-env.js",
+    "node-fabric",
+    "fabric-js",
+    "flatmap-stream",
+    "electron-native-notify"
+  ]
+}

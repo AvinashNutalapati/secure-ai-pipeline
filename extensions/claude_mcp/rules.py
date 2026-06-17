@@ -14,7 +14,14 @@ import re
 from dataclasses import dataclass, asdict
 from typing import Optional
 
-from ._rules_data import RULES as _CANON_SAST, KNOWN_CVES
+from ._rules_data import RULES as _CANON_SAST, KNOWN_CVES, POSTURE_RULES
+
+
+def posture_rules() -> list:
+    """The AI-workflow posture-rule catalog (id/category/severity/title), bundled
+    from scanners.posture.catalog via gen_rules so the MCP server can enumerate the
+    posture checks it runs without depending on the scripts/ tree."""
+    return list(POSTURE_RULES)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SAST rules (mirror of run_pipeline.SAST_REGEX_RULES + a remediation hint)

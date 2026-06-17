@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from scanners.sast.ai_insecure_defaults import RULES  # noqa: E402
 from scanners.sca.known_cves import KNOWN_CVES  # noqa: E402
+from scanners.posture.catalog import POSTURE_RULES  # noqa: E402
 
 SEMGREP_OUT = ROOT / ".semgrep" / "ai-insecure-defaults.yml"
 VSCODE_OUT = ROOT / "extensions" / "vscode" / "src" / "rules.generated.ts"
@@ -108,16 +109,19 @@ def render_rules_data() -> str:
     round-trips faithfully and is deterministic, so --check stays stable."""
     rows = "\n".join(f"    {r!r}," for r in RULES)
     cves = "\n".join(f"    {k!r}: {v!r}," for k, v in KNOWN_CVES.items())
+    posture = "\n".join(f"    {r!r}," for r in POSTURE_RULES)
     return (
         '"""\n'
         f"{_BANNER}\n\n"
         "secure-ai-pipeline:rule-source — excluded from the built-in scan.\n\n"
-        "Bundled, in-package copy of the canonical SAST rules + offline CVE data so\n"
-        "the MCP and REST servers (extensions/claude_mcp/rules.py) work when the wheel\n"
-        "is pip-installed, with no dependency on the scripts/ tree.\n"
+        "Bundled, in-package copy of the canonical SAST rules + offline CVE data +\n"
+        "the AI-workflow posture-rule catalog, so the MCP and REST servers\n"
+        "(extensions/claude_mcp/rules.py) work when the wheel is pip-installed, with\n"
+        "no dependency on the scripts/ tree.\n"
         '"""\n\n'
         f"RULES = [\n{rows}\n]\n\n"
-        f"KNOWN_CVES = {{\n{cves}\n}}\n"
+        f"KNOWN_CVES = {{\n{cves}\n}}\n\n"
+        f"POSTURE_RULES = [\n{posture}\n]\n"
     )
 
 

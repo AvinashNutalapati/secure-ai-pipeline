@@ -132,21 +132,24 @@ jobs:
 ```
 
 Push it (or run it from the **Actions** tab) and every push / PR runs a whole stack
-of OSS scanners in parallel, **consolidated per scan type**:
+of OSS scanners in parallel, then **consolidated and de-duplicated across tools** —
+the same issue found by N scanners shows as **one finding marked "confirmed by N
+tools"**, never N copies:
 
 | Layer | Engines (extras activate automatically when present) |
 |---|---|
-| **Secrets** | Gitleaks · TruffleHog · detect-secrets |
-| **SAST** | Semgrep · Bandit · gosec · Brakeman + AI-specific rules |
-| **Dependencies** | Trivy · OSV · Grype · pip-audit · npm-audit |
-| **Dependency trust** | anti-slopsquatting · GuardDog |
-| **IaC** | Checkov · KICS |
-| **CI/CD workflows** | zizmor · actionlint · Scorecard |
-| **AI workflow** | the Blast Radius check (built-in) |
+| **Secrets** | Gitleaks · TruffleHog (verified) · detect-secrets |
+| **SAST** | Semgrep · Bandit · gosec · Brakeman · ESLint-security · opengrep + AI-specific rules (LLM-output→sink, weak-crypto, insecure-deserialization, JWT) |
+| **Dependencies** | Trivy · OSV · Grype · pip-audit · npm-audit (reachability-triaged) |
+| **Dependency trust** | anti-slopsquatting · typosquat near-miss · known-malicious (OSV MAL-) · lockfile integrity · GuardDog |
+| **IaC** | Checkov · KICS · kube-linter |
+| **CI/CD workflows** | zizmor · actionlint · Scorecard · poutine (GitLab/Azure/Tekton) |
+| **AI workflow** | invisible-Unicode injection · MCP tool-poisoning & cross-server paths · rug-pull/TOCTOU drift · agent over-permission · the Blast Radius check |
 
 Results land in a **job summary**: one table per scan type (severity, finding,
-location, suggested fix — including the dependency's fixed version) plus
-**copy-paste AI fix prompts** per type and one combined prompt.
+location, suggested fix — including the dependency's fixed version, each finding
+tagged with its CWE + OWASP-LLM/Agentic class) plus **copy-paste AI fix prompts**
+per type and one combined prompt.
 
 > **Defaults are report-first, so the first run isn't a wall of red:** leaked
 > secrets and hallucinated/malicious packages **always block**; CVEs and SAST
@@ -161,7 +164,7 @@ location, suggested fix — including the dependency's fixed version) plus
 > still appear in the **Actions log** and the **job summary**.
 >
 > **Pin for production:** `@v3` tracks the latest fix; pin to a tag/SHA (e.g.
-> `@v3.2.2`) to lock the version.
+> `@v3.3.0`) to lock the version.
 
 ---
 
@@ -173,6 +176,8 @@ gate from there:
 
 ```bash
 npx secure-ai-pipeline scan . --detail sast                       # expand one layer
+npx secure-ai-pipeline scan . --fix                               # auto-apply deterministic fixes (verify=False→True, debug=True→False…)
+npx secure-ai-pipeline scan . --reachable-only                    # drop CVEs in packages you never import
 npx secure-ai-pipeline scan . --dast-url http://localhost:3000    # add a DAST pass
 npx secure-ai-pipeline scan . --html report.html --json out.json  # shareable reports
 npx secure-ai-pipeline scan . --tools                             # which OSS engines you have
@@ -249,13 +254,16 @@ instructions — done. (Self-hosting: [DEPLOY.md](extensions/openai-gpt/DEPLOY.m
 
 | Surface | Examples |
 |---|---|
-| AI IDE rules | `.cursorrules`/Cline/Windsurf/Copilot rules that auto-run, skip approval, `curl\|bash`, prompt-injection overrides, exfiltration-shaped instructions |
-| Claude permissions | bare `"Bash"`/`"Read"` allows, home/root reads, `rm -rf`, `bypassPermissions`, unrestricted WebFetch |
-| MCP configs | secrets handed to servers, shell startup commands, `/` filesystem mounts, unauthenticated remotes |
-| GitHub Actions | unpinned third-party actions (the tj-actions lesson), `pull_request_target`, `github.event` script injection |
+| AI IDE rules | `.cursorrules`/Cline/Windsurf/Copilot/`CLAUDE.md` rules that auto-run, skip approval, `curl\|bash`, prompt-injection overrides, exfiltration-shaped instructions, **base64/hex/ROT/Zalgo-obfuscated payloads** |
+| Invisible Unicode | **hidden Tag / bidi / zero-width characters** smuggled into rules/skill/MCP files — the "Rules File Backdoor" a human reviewer can't see |
+| MCP servers | secrets handed to servers, shell startup, `/` mounts, unauthenticated remotes, **tool-poisoning language in tool descriptions, permissive input schemas, cross-server exfil/RCE attack-paths** |
+| Claude permissions | bare `"Bash"`/`"Read"` allows, home/root reads, `rm -rf`, `bypassPermissions`, unrestricted WebFetch, **oversized allow lists** |
+| Rug-pull / TOCTOU | **approval-sensitive files (rules, MCP, workflows) mutated after approval** — vs a committed integrity baseline (Cuckoo Attack) |
+| Compound exfiltration | a skill/rule file that **both reads a credential and transmits it off-box** |
+| GitHub Actions | unpinned third-party actions (the tj-actions lesson), `pull_request_target` **+ PR-head checkout (pwn request)**, **secrets→unpinned action**, `github.event` script injection |
 | Prompt privacy | secrets, internal URLs/IPs, and emails sitting in files that get sent to model providers |
 | Config secrets | hardcoded tokens in `.env`, `mcp.json`, Claude configs (GitHub, OpenAI, Anthropic, AWS, Slack, Stripe key shapes) |
-| Dependency trust | hallucinated/slopsquatted imports verified against live PyPI & npm |
+| Dependency trust | hallucinated/slopsquatted imports (live PyPI/npm), **typosquat near-misses, known-malicious names (OSV MAL-), lockfile integrity** |
 
 **Your AI-written code** — the CI pipeline (Stage 0 blocks before Stage 1 runs):
 
@@ -268,10 +276,18 @@ instructions — done. (Self-hosting: [DEPLOY.md](extensions/openai-gpt/DEPLOY.m
 | TLS `verify=False` | Semgrep `tls-verify-false` | Block |
 | `subprocess(..., shell=True)` | Semgrep `subprocess-shell-true` | Block |
 | `eval/exec(request...)` | Semgrep `eval-user-input` | Block |
+| **LLM output → eval/exec/shell** (OWASP LLM05) | `llm-output-to-sink` | Block |
+| **Unsafe deserialization** (`pickle`, `yaml.load`) | `insecure-deserialization` | Block |
+| **JWT signature verification disabled** | `jwt-verify-disabled` | Block |
+| **Weak crypto** (`md5`/`sha1`), **insecure-random tokens**, **bind `0.0.0.0`** | `weak-hash` / `insecure-random-token` / `bind-all-interfaces` | Warn |
 | Hardcoded credentials | Semgrep + Gitleaks | Block |
 | Wildcard CORS | Semgrep `wildcard-cors` | Warn |
 | Known-CVE pinned dependency | Trivy SCA | Block |
 | Live-site issues (XSS headers, cookies…) | ZAP baseline (needs `STAGING_URL`) | Report only |
+
+Many of these have a **deterministic `--fix`** (e.g. `verify=False`→`verify=True`,
+`debug=True`→`debug=False`), and every finding is tagged with its **CWE + OWASP
+class** for governance reporting.
 
 ---
 

@@ -150,7 +150,12 @@ def test_cli_scan_flags_an_insecure_fixture(tmp_path):
                  "--offline", "--no-input", "--no-color"])
     assert proc.returncode == 0, f"scan failed:\n{proc.stderr}"
     assert "Secure AI Pipeline" in proc.stdout
-    assert "verify=False" in proc.stdout
+    # The SAST layer flags the verify=False issue. Tolerate the engine's wording:
+    # the built-in fallback prints "verify=False"; semgrep, if installed, phrases it
+    # "Certificate verification ... disabled". Either way SAST has a finding.
+    assert "STATIC ANALYSIS" in proc.stdout
+    out = proc.stdout.lower()
+    assert "verify=false" in out or "certificate verification" in out
 
 
 @needs_node
