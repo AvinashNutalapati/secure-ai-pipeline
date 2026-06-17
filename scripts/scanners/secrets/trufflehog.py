@@ -47,7 +47,10 @@ def parse(stdout: str) -> list:
              "Rotate it immediately; a leaked secret is valid until revoked."),
             file, line_no,
             "Remove the secret, load it from the environment / a secrets manager, and ROTATE it.",
-            "trufflehog"))
+            "trufflehog",
+            # A live-verified hit is the authoritative one — consolidation prefers it
+            # when several secret scanners report the same (file, line).
+            confidence="verified" if verified else ""))
     return out
 
 

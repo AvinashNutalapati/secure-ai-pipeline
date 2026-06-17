@@ -24,6 +24,9 @@ RULE_SOURCES = [
     ("**/.windsurf/rules/*", "Windsurf"),
     ("**/.github/copilot-instructions.md", "Copilot"),
     ("**/AGENTS.md", "Agent"),
+    ("**/CLAUDE.md", "Claude"),
+    ("**/GEMINI.md", "Gemini"),
+    ("**/SKILL.md", "Skill"),
 ]
 
 RISKY_DIRECTIVES = [
@@ -51,7 +54,30 @@ RISKY_DIRECTIVES = [
                 r"|POST\s.*https?://)"),
      "exfiltration", "CRITICAL",
      "Rule text resembles an exfiltration instruction."),
+    # Encoding-obfuscation: a payload that's decoded/run hides intent from review.
+    # The verb and the base64 blob must be CLOSE (<=40 chars, either order), so an
+    # unrelated long token elsewhere on a line that merely mentions "run" doesn't
+    # false-positive.
+    (re.compile(r"(?i)(?:"
+                r"(?:decode|exec|eval|atob|fromCharCode|unescape|base64_?decode)\b[^\n]{0,40}[A-Za-z0-9+/]{40,}={0,2}"
+                r"|[A-Za-z0-9+/]{40,}={0,2}[^\n]{0,40}\b(?:decode|exec|eval|atob|fromCharCode|unescape|base64_?decode)\b"
+                r")"),
+     "encoded-payload", "HIGH",
+     "Rule has a long base64-looking blob next to a decode/exec verb - an "
+     "obfuscated payload."),
+    (re.compile(r"(?:\\x[0-9a-fA-F]{2}){8,}"),
+     "hex-encoded", "MEDIUM",
+     "Rule contains a long hex-escaped (\\xNN) byte string - likely an obfuscated "
+     "payload."),
+    (re.compile(r"(?i)\br[o0]t[\s_(-]{0,3}(?:13|47|\d{1,2})\b"),
+     "rot-encoded", "MEDIUM",
+     "Rule references ROT-n encoding - used to obfuscate instructions from review."),
 ]
+
+# Zalgo / stacked combining marks (U+0300-U+036F) are a visual-obfuscation trick;
+# built via chr() so this source stays plain ASCII. TWO in a row never occurs in
+# natural text (a single accent is fine: cafe-acute, naive-diaeresis).
+_ZALGO = re.compile("[" + re.escape(chr(0x0300)) + "-" + re.escape(chr(0x036F)) + "]{2,}")
 
 
 def _collect(root: Path) -> list[tuple[Path, str]]:
@@ -103,4 +129,15 @@ def scan(root: Path) -> list[Finding]:
                         where, i,
                     ))
                     break  # one finding per rule per file
+        for i, line in enumerate(lines, 1):
+            if _ZALGO.search(line):
+                findings.append(Finding(
+                    "ai_ide", "AI IDE rules", "ai-ide-obfuscation-zalgo", "MEDIUM",
+                    f"{label} rule has stacked combining marks (Zalgo obfuscation)",
+                    f"Zalgo/stacked combining-mark text in {where}:{i} hides the "
+                    "line's real content from a human reviewer.",
+                    "Remove the combining marks; retype the line in plain text.",
+                    where, i,
+                ))
+                break
     return findings
