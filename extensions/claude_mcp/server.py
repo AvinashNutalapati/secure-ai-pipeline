@@ -26,7 +26,7 @@ from .registry import check_package as _check_package
 app = FastAPI(
     title="Secure AI Pipeline API",
     description="Security scanner for AI-generated code.",
-    version="3.3.0",
+    version="3.3.1",
 )
 
 # Optional API-key auth. Set SAP_API_KEY in the deployment environment to require

@@ -164,7 +164,7 @@ per type and one combined prompt.
 > still appear in the **Actions log** and the **job summary**.
 >
 > **Pin for production:** `@v3` tracks the latest fix; pin to a tag/SHA (e.g.
-> `@v3.3.0`) to lock the version.
+> `@v3.3.1`) to lock the version.
 
 ---
 
