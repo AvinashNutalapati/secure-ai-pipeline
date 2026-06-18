@@ -35,3 +35,21 @@ def test_catalog_shipped_to_mcp_bundle_in_sync():
     # gen_rules --check enforces freshness; this asserts the bundled copy matches.
     from extensions.claude_mcp._rules_data import POSTURE_RULES as bundled
     assert bundled == POSTURE_RULES, "MCP bundle posture catalog drifted — run gen_rules.py"
+
+
+def test_mcp_posture_catalog_helper():
+    # The data behind the list_posture_checks MCP tool (testable without the mcp SDK).
+    from extensions.claude_mcp import rules
+    full = rules.posture_catalog()
+    assert full["count"] == len(POSTURE_RULES)
+    assert "MCP" in full["categories"]
+    # every grouped entry is a compact {id, severity, title}
+    for rows in full["categories"].values():
+        for r in rows:
+            assert set(r) == {"id", "severity", "title"}
+    # category filter is a case-insensitive substring
+    mcp_only = rules.posture_catalog("mcp")
+    assert mcp_only["count"] >= 1
+    assert set(mcp_only["categories"]) == {"MCP"}
+    assert mcp_only["count"] < full["count"]
+    assert rules.posture_catalog("no-such-category")["count"] == 0

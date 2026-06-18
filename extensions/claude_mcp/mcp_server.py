@@ -194,6 +194,25 @@ def scan_repo(path: str, deep: bool = False) -> dict:
     return _wrap(verdict, summary, root=result["root"], layers=layers)
 
 
+@mcp.tool(annotations=_READS_LOCAL)
+def list_posture_checks(category: str = "") -> dict:
+    """List the AI-workflow posture checks this pipeline runs, grouped by category.
+
+    These are the checks `scan_repo` applies beyond classic SAST/SCA: invisible-
+    Unicode injection, MCP tool-poisoning & cross-server attack-paths, rug-pull/
+    TOCTOU config drift, agent over-permission, GitHub Actions risks, and
+    dependency-trust (slopsquatting / typosquat / known-malicious). Use it to
+    explain what the scanner inspects, or to look up a rule's id, severity, and
+    meaning. Pass `category` (e.g. "MCP", "CI/CD", "Hidden Unicode") to filter.
+    Read-only and offline — it just reports the bundled catalog.
+    """
+    cat = rules.posture_catalog(category)
+    scope = f" matching '{category}'" if category else ""
+    summary = (f"{cat['count']} posture check(s){scope} across "
+               f"{len(cat['categories'])} categor{'y' if len(cat['categories']) == 1 else 'ies'}.")
+    return _wrap("ok", summary, **cat)
+
+
 @mcp.prompt(title="Secure review")
 def secure_review() -> str:
     """A checklist that makes the assistant verify packages + scan code before finalizing."""

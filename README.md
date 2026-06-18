@@ -231,11 +231,13 @@ sap-mcp --selftest          # verify it works before wiring it up
   **Settings → Extensions → Install from file**.
 
 Your assistant can now call `check_package`, `verify_install`, `sast_scan`,
-`sca_scan`, `full_scan`, and `scan_repo` mid-session — ask it to *"verify that
-package exists before importing it"* or *"scan this code before you give it to me."*
-Every tool returns a **verdict** (block / warn / ok). The snippet tools work
-standalone; `scan_repo` runs the full multi-tool scan when the pipeline is present.
-([details](extensions/claude_mcp/README.md))
+`sca_scan`, `full_scan`, `scan_repo`, and `list_posture_checks` mid-session — ask it
+to *"verify that package exists before importing it"*, *"scan this code before you
+give it to me"*, or *"what AI-workflow posture checks do you run?"* Every scan tool
+returns a **verdict** (block / warn / ok). The snippet tools work standalone;
+`scan_repo` runs the full multi-tool scan when the pipeline is present, and
+`list_posture_checks` enumerates the AI-posture catalog (MCP poisoning, Unicode
+injection, rug-pull/TOCTOU, …). ([details](extensions/claude_mcp/README.md))
 
 ---
 

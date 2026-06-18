@@ -23,6 +23,20 @@ def posture_rules() -> list:
     posture checks it runs without depending on the scripts/ tree."""
     return list(POSTURE_RULES)
 
+
+def posture_catalog(category: str = "") -> dict:
+    """The posture-rule catalog grouped by category, optionally filtered by a
+    case-insensitive category substring. Pure data → testable without the MCP SDK."""
+    rows = posture_rules()
+    if category:
+        needle = category.lower()
+        rows = [r for r in rows if needle in r["category"].lower()]
+    grouped: dict = {}
+    for r in rows:
+        grouped.setdefault(r["category"], []).append(
+            {"id": r["id"], "severity": r["severity"], "title": r["title"]})
+    return {"count": len(rows), "categories": grouped}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SAST rules (mirror of run_pipeline.SAST_REGEX_RULES + a remediation hint)
 # ─────────────────────────────────────────────────────────────────────────────
