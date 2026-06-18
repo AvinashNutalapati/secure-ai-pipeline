@@ -5,6 +5,7 @@
 > surface: invented package names, inlined secrets, over-permissioned agents,
 > insecure defaults. This is the free, open-source security layer that catches all
 > of it — in your terminal, your editor, your CI, and inside the AI assistant itself.
+> 
 > 100% free · MIT licensed · **your code never leaves your machine**
 
 [![CI](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/AvinashNutalapati/secure-ai-pipeline/actions/workflows/ci.yml)
